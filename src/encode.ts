@@ -287,21 +287,24 @@ export function textToBytes(text: string): Uint8Array {
  * verified-`contactMessage` queue shape).
  *
  * Keyed by the sender node's `pubKeyPrefix` (first 6 bytes of its key).
- * `senderTimestamp` is the device-epoch seconds of the supplied clock reading,
- * so arrival timestamps advance deterministically with the {@link
- * import("./clock.js").SimClock}. `txtType` defaults to `TxtType.Plain`.
+ * `senderTimestamp` is derived from `nowMs` (the clock's reading at arrival)
+ * unless `sentAtMs` is provided, in which case `sentAtMs` is used instead.
+ * This lets out-of-order scenarios ({@link import("./traffic.js").outOfOrder})
+ * specify a sender timestamp that differs from the arrival time.
+ * `txtType` defaults to `TxtType.Plain`.
  */
 export function contactMessageOf(
   node: SimNode,
   text: string,
   nowMs: number,
   txtType: TxtType = TxtType.Plain,
+  sentAtMs?: number,
 ): RawContactMessage {
   return {
     pubKeyPrefix: pubKeyPrefixOf(node),
     pathLen: 0,
     txtType,
-    senderTimestamp: epochSecsOf(nowMs),
+    senderTimestamp: epochSecsOf(sentAtMs !== undefined ? sentAtMs : nowMs),
     text,
   };
 }
@@ -311,19 +314,22 @@ export function contactMessageOf(
  * verified-`channelMessage` queue shape).
  *
  * Carries the channel slot index and the *decoded* `text` — the device held the
- * key and decoded it. `txtType` defaults to `TxtType.Plain`.
+ * key and decoded it. `senderTimestamp` is derived from `nowMs` unless
+ * `sentAtMs` is provided (see {@link contactMessageOf} for the same pattern).
+ * `txtType` defaults to `TxtType.Plain`.
  */
 export function channelMessageOf(
   channelIdx: number,
   text: string,
   nowMs: number,
   txtType: TxtType = TxtType.Plain,
+  sentAtMs?: number,
 ): RawChannelMessage {
   return {
     channelIdx,
     pathLen: 0,
     txtType,
-    senderTimestamp: epochSecsOf(nowMs),
+    senderTimestamp: epochSecsOf(sentAtMs !== undefined ? sentAtMs : nowMs),
     text,
   };
 }

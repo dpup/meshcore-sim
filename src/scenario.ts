@@ -60,6 +60,17 @@ export interface MessageEvent {
   rssi?: number;
   /** Received signal-to-noise ratio, in dB. See {@link MessageEvent.rssi}. */
   snr?: number;
+  /**
+   * Optional sender-clock offset (ms, relative to connect time) used as the
+   * `senderTimestamp` in the encoded `RawContactMessage`.
+   *
+   * When absent (the normal case), `senderTimestamp` is derived from
+   * `clock.now()` at the moment the event fires. When present, the supplied
+   * offset is used instead — enabling out-of-order scenarios where arrival
+   * order (`at`) differs from sender-timestamp order (`sentAt`). See
+   * {@link outOfOrder} in `traffic.ts`.
+   */
+  sentAt?: number;
 }
 
 /**
@@ -92,6 +103,15 @@ export interface ChannelMessageEvent {
   rssi?: number;
   /** Received signal-to-noise ratio, in dB — carried on `channelData.snr`. */
   snr?: number;
+  /**
+   * Optional sender-clock offset (ms, relative to connect time) used as the
+   * `senderTimestamp` in the encoded `RawChannelMessage`.
+   *
+   * When absent, `senderTimestamp` is derived from `clock.now()`. When present,
+   * the supplied offset overrides it — enabling out-of-order channel scenarios.
+   * See {@link outOfOrder} in `traffic.ts`.
+   */
+  sentAt?: number;
 }
 
 /**

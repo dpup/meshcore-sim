@@ -57,6 +57,17 @@ export type {
   TelemetryEvent,
 } from "./scenario.js";
 
+// Generators — M5 (procedural world + scenario builders).
+export { generateWorld } from "./generate.js";
+export type { GenerateWorldOptions } from "./generate.js";
+export { burst, crosstalk, outOfOrder, quiet, traffic } from "./traffic.js";
+export type {
+  BurstOptions,
+  CrosstalkOptions,
+  OutOfOrderOptions,
+  QuietOptions,
+} from "./traffic.js";
+
 // Errors.
 export { SimError } from "./errors.js";
 

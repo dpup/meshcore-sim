@@ -635,11 +635,21 @@ export class SimConnection extends EventEmitter {
    * `pubKeyPrefix`, then emit `MsgWaiting`. If the event carries rssi/snr (which
    * the verified queue shape has no field for), additionally emit a `LogRxData`
    * push so the signal metadata is observable.
+   *
+   * If the event has a `sentAt` field, it is passed to {@link contactMessageOf}
+   * as the `sentAtMs` override, so the `senderTimestamp` in the encoded message
+   * reflects the sender's clock rather than the arrival clock.
    */
   private fireMessage(event: MessageEvent): void {
     const node = this.nodeById(event.from);
     this.deviceQueue.push({
-      contactMessage: contactMessageOf(node, event.text, this.clock.now(), event.txtType),
+      contactMessage: contactMessageOf(
+        node,
+        event.text,
+        this.clock.now(),
+        event.txtType,
+        event.sentAt,
+      ),
     });
     this.emitPush(Constants.PushCodes.MsgWaiting);
     if (event.rssi !== undefined || event.snr !== undefined) {
@@ -656,13 +666,23 @@ export class SimConnection extends EventEmitter {
    * carrying the raw bytes + `snr` and **no decoded text**, so it can never
    * surface as a verified `channelMessage` (the admin-gate negative case). Both
    * then emit `MsgWaiting`.
+   *
+   * If the event has a `sentAt` field, it is passed to {@link channelMessageOf}
+   * as the `sentAtMs` override (verified path only — unverified `channelData`
+   * has no `senderTimestamp` field on the wire).
    */
   private fireChannelMessage(event: ChannelMessageEvent): void {
     const channelIdx = this.resolveChannelIdx(event.channel);
     const verified = event.verified ?? true;
     if (verified) {
       this.deviceQueue.push({
-        channelMessage: channelMessageOf(channelIdx, event.text, this.clock.now()),
+        channelMessage: channelMessageOf(
+          channelIdx,
+          event.text,
+          this.clock.now(),
+          undefined,
+          event.sentAt,
+        ),
       });
       this.emitPush(Constants.PushCodes.MsgWaiting);
       if (event.rssi !== undefined || event.snr !== undefined) {

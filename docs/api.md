@@ -220,7 +220,7 @@ one call. After all due timers have fired, `now()` is set to exactly
 
 | Parameter | Type |
 | ------ | ------ |
-| `by` | [`Duration`](#duration) |
+| `by` | [`Duration`](#duration-1) |
 
 ###### Returns
 
@@ -228,7 +228,7 @@ one call. After all due timers have fired, `now()` is set to exactly
 
 ###### Throws
 
-If `by` is not a valid [Duration](#duration).
+If `by` is not a valid [Duration](#duration-1).
 
 ##### clearInterval()
 
@@ -373,7 +373,7 @@ would cause an infinite loop inside a single [advance](#advance) call.
 | Parameter | Type |
 | ------ | ------ |
 | `callback` | () => `void` |
-| `interval` | [`Duration`](#duration) |
+| `interval` | [`Duration`](#duration-1) |
 
 ###### Returns
 
@@ -381,7 +381,7 @@ would cause an infinite loop inside a single [advance](#advance) call.
 
 ###### Throws
 
-If `interval` is not a valid [Duration](#duration) or its
+If `interval` is not a valid [Duration](#duration-1) or its
   parsed value is `<= 0`.
 
 ###### Implementation of
@@ -405,7 +405,7 @@ fire at the current virtual time on the next [advance](#advance) or
 | Parameter | Type |
 | ------ | ------ |
 | `callback` | () => `void` |
-| `delay` | [`Duration`](#duration) |
+| `delay` | [`Duration`](#duration-1) |
 
 ###### Returns
 
@@ -413,7 +413,7 @@ fire at the current virtual time on the next [advance](#advance) or
 
 ###### Throws
 
-If `delay` is not a valid [Duration](#duration).
+If `delay` is not a valid [Duration](#duration-1).
 
 ###### Implementation of
 
@@ -1366,6 +1366,67 @@ Id of the [SimNode](#simnode) advertising.
 
 ***
 
+### BurstOptions
+
+Options for [burst](#burst-1).
+
+#### Properties
+
+##### count
+
+```ts
+count: number;
+```
+
+Number of messages to generate. Must be ≥ 1.
+
+##### from
+
+```ts
+from: string;
+```
+
+Id of the `SimNode` that sends all messages.
+
+##### seed?
+
+```ts
+optional seed?: number;
+```
+
+Optional seed for the PRNG. Same seed ⇒ identical scenario.
+Defaults to a fixed constant so the result is always deterministic.
+
+##### text?
+
+```ts
+optional text?: (i) => string;
+```
+
+Override the text for each message. Receives the 0-based index.
+Defaults to `"msg <i>"`.
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `i` | `number` |
+
+###### Returns
+
+`string`
+
+##### within
+
+```ts
+within: Duration;
+```
+
+Window in which all messages must arrive. Every generated event has
+`at ≤ within` (with jitter placing messages anywhere inside the window).
+
+***
+
 ### ChannelMessageEvent
 
 Traffic on a channel — the channel-message path, verified or not.
@@ -1409,6 +1470,19 @@ optional rssi?: number;
 ```
 
 Received signal strength, in dBm. Rides on the unverified/raw path.
+
+##### sentAt?
+
+```ts
+optional sentAt?: number;
+```
+
+Optional sender-clock offset (ms, relative to connect time) used as the
+`senderTimestamp` in the encoded `RawChannelMessage`.
+
+When absent, `senderTimestamp` is derived from `clock.now()`. When present,
+the supplied offset overrides it — enabling out-of-order channel scenarios.
+See [outOfOrder](#outoforder-1) in `traffic.ts`.
 
 ##### snr?
 
@@ -1509,7 +1583,7 @@ Schedule `callback` to run repeatedly every `interval`.
 | Parameter | Type |
 | ------ | ------ |
 | `callback` | () => `void` |
-| `interval` | [`Duration`](#duration) |
+| `interval` | [`Duration`](#duration-1) |
 
 ###### Returns
 
@@ -1530,13 +1604,106 @@ Schedule `callback` to run after `delay` has elapsed.
 | Parameter | Type |
 | ------ | ------ |
 | `callback` | () => `void` |
-| `delay` | [`Duration`](#duration) |
+| `delay` | [`Duration`](#duration-1) |
 
 ###### Returns
 
 [`TimerHandle`](#timerhandle)
 
 A handle that can be passed to [clearTimeout](#cleartimeout-1).
+
+***
+
+### CrosstalkOptions
+
+Options for [crosstalk](#crosstalk-1).
+
+#### Properties
+
+##### count?
+
+```ts
+optional count?: number;
+```
+
+Total number of messages to generate across all nodes.
+
+Defaults to `nodes.length * 2` (each node sends ~2 messages on average).
+Must be ≥ `nodes.length` so every node sends at least one message.
+
+##### nodes
+
+```ts
+nodes: string[];
+```
+
+Ids of the `SimNode`s that send messages. At least one node is required.
+Each node will send at least one message.
+
+##### seed?
+
+```ts
+optional seed?: number;
+```
+
+Optional seed. Same seed ⇒ identical scenario.
+Defaults to a fixed constant.
+
+##### within
+
+```ts
+within: Duration;
+```
+
+Window in which all messages arrive.
+
+***
+
+### GenerateWorldOptions
+
+Options for [generateWorld](#generateworld).
+
+#### Properties
+
+##### channels?
+
+```ts
+optional channels?: number;
+```
+
+How many channel slots to generate.
+
+Defaults to `2`: a `"public"` channel at index 0 and an `"ops"` private
+channel at index 1. Pass `1` for a public-only world; `0` for no channels.
+
+##### nodes
+
+```ts
+nodes: number;
+```
+
+Total number of nodes in the world, **including** the home companion.
+Must be ≥ 1.
+
+##### repeaters?
+
+```ts
+optional repeaters?: number;
+```
+
+How many of the remote nodes are [NodeRole.Repeater](#repeater)s.
+
+Defaults to `max(0, floor(remotes / 4))` — a sensible ~25% fraction.
+If greater than `nodes - 1`, it is clamped to the number of remote nodes.
+
+##### seed
+
+```ts
+seed: number;
+```
+
+Seed for the PRNG. The same seed always produces a deep-equal world
+(determinism guarantee, AGENTS.md).
 
 ***
 
@@ -1617,6 +1784,21 @@ Received signal strength, in dBm. Verified contact messages carry no
 rssi/snr on the wire, so when set this rides on an additional `LogRxData`
 push (see [SimConnection](#simconnection)).
 
+##### sentAt?
+
+```ts
+optional sentAt?: number;
+```
+
+Optional sender-clock offset (ms, relative to connect time) used as the
+`senderTimestamp` in the encoded `RawContactMessage`.
+
+When absent (the normal case), `senderTimestamp` is derived from
+`clock.now()` at the moment the event fires. When present, the supplied
+offset is used instead — enabling out-of-order scenarios where arrival
+order (`at`) differs from sender-timestamp order (`sentAt`). See
+[outOfOrder](#outoforder-1) in `traffic.ts`.
+
 ##### snr?
 
 ```ts
@@ -1675,6 +1857,68 @@ reachable: boolean;
 ```
 
 The node's new reachability.
+
+***
+
+### OutOfOrderOptions
+
+Options for [outOfOrder](#outoforder-1).
+
+#### Properties
+
+##### count
+
+```ts
+count: number;
+```
+
+Number of messages to generate. Must be ≥ 2 (otherwise "out of order" is trivial).
+
+##### from
+
+```ts
+from: string;
+```
+
+Id of the `SimNode` that sends all messages.
+
+##### seed?
+
+```ts
+optional seed?: number;
+```
+
+Optional seed. Same seed ⇒ identical scenario.
+Defaults to a fixed constant.
+
+##### within
+
+```ts
+within: Duration;
+```
+
+Arrival window. All messages arrive within `within` ms of connect time.
+
+***
+
+### QuietOptions
+
+Options for [quiet](#quiet-1).
+
+#### Properties
+
+##### duration
+
+```ts
+duration: Duration;
+```
+
+How long the idle span lasts.
+
+The returned scenario has no events, but the `duration` is stored so a
+test can use it with `clock.advance(opts.duration)` to represent the idle
+period. It is intentionally not embedded in the Scenario itself (a Scenario
+is just events); pass it to the clock separately.
 
 ***
 
@@ -2217,6 +2461,146 @@ readonly RoomServer: "roomserver" = "roomserver";
 
 ***
 
+### traffic
+
+```ts
+const traffic: object;
+```
+
+A namespace collecting all scenario generators.
+
+#### Type Declaration
+
+##### burst
+
+```ts
+burst: (opts) => Scenario;
+```
+
+Generate `count` messages from node `from`, spread across `within` with
+seeded jitter.
+
+This is the canonical coalescer stressor: `traffic.burst({ from: "rocky",
+count: 3, within: "5s" })` gives you a scenario that fires three messages
+across a 5-second window, with arrival offsets jittered by the PRNG (never
+evenly spaced). Same seed ⇒ identical scenario.
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `opts` | [`BurstOptions`](#burstoptions) |
+
+###### Returns
+
+[`Scenario`](#scenario)
+
+###### Throws
+
+If `count < 1`.
+
+##### crosstalk
+
+```ts
+crosstalk: (opts) => Scenario;
+```
+
+Generate interleaved messages from multiple nodes within a window.
+
+Arrival times and node assignments are seeded so the same `seed` always
+produces the same scenario. Every node in `nodes` sends at least one message.
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `opts` | [`CrosstalkOptions`](#crosstalkoptions) |
+
+###### Returns
+
+[`Scenario`](#scenario)
+
+###### Throws
+
+If `nodes` is empty or `count < nodes.length`.
+
+##### outOfOrder
+
+```ts
+outOfOrder: (opts) => Scenario;
+```
+
+Generate messages whose **arrival** order differs from their **sender-timestamp** order.
+
+**Model (preferred `sentAt` approach):** Each message has two time offsets:
+- `at` — the arrival offset (when the message enters the device queue). These
+  are jittered within `within` in **ascending** order (earliest arrival first).
+- `sentAt` — the sender's clock offset at send time. These are set to the
+  **reverse** of the arrival offsets — so the last message to arrive has the
+  smallest `sentAt` and the first to arrive has the largest `sentAt`.
+
+Concretely: if arrivals are `[t1 < t2 < t3]` then `sentAt` values are
+`[t3, t2, t1]`. A consumer that trusts arrival order sees them in ascending-
+arrival order; a consumer that reorders by `senderTimestamp` will see them in
+*descending*-arrival order — the intended reorder stress.
+
+The `sentAt` field is an optional extension on [MessageEvent](#messageevent) (see
+`scenario.ts`); when absent the connection uses `clock.now()` as before.
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `opts` | [`OutOfOrderOptions`](#outoforderoptions) |
+
+###### Returns
+
+[`Scenario`](#scenario)
+
+###### Throws
+
+If `count < 2`.
+
+##### quiet
+
+```ts
+quiet: (_opts) => Scenario;
+```
+
+Return an empty [Scenario](#scenario) representing an idle span.
+
+Use it together with `clock.advance(opts.duration)` to represent a period
+during which nothing should arrive. Useful for asserting that debounce timers
+don't fire spuriously, or that the world stays quiet between bursts.
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_opts` | [`QuietOptions`](#quietoptions) |
+
+###### Returns
+
+[`Scenario`](#scenario)
+
+###### Example
+
+```ts
+const silence = traffic.quiet({ duration: "10s" });
+// silence.events is empty; advance the clock separately:
+clock.advance("10s");
+expect(received).toHaveLength(0);
+```
+
+#### Example
+
+```ts
+import { traffic } from "@dpup/meshcore-sim";
+const scn = traffic.burst({ from: "rocky-ridge", count: 5, within: "10s", seed: 42 });
+```
+
+***
+
 ### VERSION
 
 ```ts
@@ -2239,7 +2623,7 @@ Ergonomic helper: pair a time offset with an event.
 
 | Parameter | Type |
 | ------ | ------ |
-| `d` | [`Duration`](#duration) |
+| `d` | [`Duration`](#duration-1) |
 | `event` | [`SimEvent`](#simevent) |
 
 #### Returns
@@ -2254,6 +2638,36 @@ scenario([
   at("2s", { kind: "advert", nodeId: "rocky" }),
 ]);
 ```
+
+***
+
+### burst()
+
+```ts
+function burst(opts): Scenario;
+```
+
+Generate `count` messages from node `from`, spread across `within` with
+seeded jitter.
+
+This is the canonical coalescer stressor: `traffic.burst({ from: "rocky",
+count: 3, within: "5s" })` gives you a scenario that fires three messages
+across a 5-second window, with arrival offsets jittered by the PRNG (never
+evenly spaced). Same seed ⇒ identical scenario.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `opts` | [`BurstOptions`](#burstoptions) |
+
+#### Returns
+
+[`Scenario`](#scenario)
+
+#### Throws
+
+If `count < 1`.
 
 ***
 
@@ -2304,6 +2718,33 @@ the referenced node id so the contact and node line up.
 #### Returns
 
 [`SimContact`](#simcontact)
+
+***
+
+### crosstalk()
+
+```ts
+function crosstalk(opts): Scenario;
+```
+
+Generate interleaved messages from multiple nodes within a window.
+
+Arrival times and node assignments are seeded so the same `seed` always
+produces the same scenario. Every node in `nodes` sends at least one message.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `opts` | [`CrosstalkOptions`](#crosstalkoptions) |
+
+#### Returns
+
+[`Scenario`](#scenario)
+
+#### Throws
+
+If `nodes` is empty or `count < nodes.length`.
 
 ***
 
@@ -2362,6 +2803,43 @@ ids produce different keys with overwhelming probability.
 
 ***
 
+### generateWorld()
+
+```ts
+function generateWorld(opts): MeshWorld;
+```
+
+Generate a plausible-shaped [MeshWorld](#meshworld) from a few knobs.
+
+The world is built through [defineWorld](#defineworld) (the single validated path) so
+it is the same kind of validated, internally consistent object as a
+hand-authored world — a generator can never produce an inconsistent world.
+
+Same seed ⇒ deep-equal world, byte for byte.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `opts` | [`GenerateWorldOptions`](#generateworldoptions) |
+
+#### Returns
+
+[`MeshWorld`](#meshworld)
+
+#### Example
+
+```ts
+const world = generateWorld({ seed: 42, nodes: 10, repeaters: 2 });
+// → 1 home companion + 2 repeaters + 7 companions, 2 channels, 10 contacts
+```
+
+#### Throws
+
+If `nodes < 1`.
+
+***
+
 ### node()
 
 ```ts
@@ -2391,6 +2869,78 @@ consistency.
 
 ***
 
+### outOfOrder()
+
+```ts
+function outOfOrder(opts): Scenario;
+```
+
+Generate messages whose **arrival** order differs from their **sender-timestamp** order.
+
+**Model (preferred `sentAt` approach):** Each message has two time offsets:
+- `at` — the arrival offset (when the message enters the device queue). These
+  are jittered within `within` in **ascending** order (earliest arrival first).
+- `sentAt` — the sender's clock offset at send time. These are set to the
+  **reverse** of the arrival offsets — so the last message to arrive has the
+  smallest `sentAt` and the first to arrive has the largest `sentAt`.
+
+Concretely: if arrivals are `[t1 < t2 < t3]` then `sentAt` values are
+`[t3, t2, t1]`. A consumer that trusts arrival order sees them in ascending-
+arrival order; a consumer that reorders by `senderTimestamp` will see them in
+*descending*-arrival order — the intended reorder stress.
+
+The `sentAt` field is an optional extension on [MessageEvent](#messageevent) (see
+`scenario.ts`); when absent the connection uses `clock.now()` as before.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `opts` | [`OutOfOrderOptions`](#outoforderoptions) |
+
+#### Returns
+
+[`Scenario`](#scenario)
+
+#### Throws
+
+If `count < 2`.
+
+***
+
+### quiet()
+
+```ts
+function quiet(_opts): Scenario;
+```
+
+Return an empty [Scenario](#scenario) representing an idle span.
+
+Use it together with `clock.advance(opts.duration)` to represent a period
+during which nothing should arrive. Useful for asserting that debounce timers
+don't fire spuriously, or that the world stays quiet between bursts.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_opts` | [`QuietOptions`](#quietoptions) |
+
+#### Returns
+
+[`Scenario`](#scenario)
+
+#### Example
+
+```ts
+const silence = traffic.quiet({ duration: "10s" });
+// silence.events is empty; advance the clock separately:
+clock.advance("10s");
+expect(received).toHaveLength(0);
+```
+
+***
+
 ### scenario()
 
 ```ts
@@ -2400,7 +2950,7 @@ function scenario(events): Scenario;
 Assemble and validate a [Scenario](#scenario) — the single constructor every
 scenario passes through.
 
-Validates each `at` is a well-formed [Duration](#duration) (via [toMillis](#tomillis))
+Validates each `at` is a well-formed [Duration](#duration-1) (via [toMillis](#tomillis))
 and sorts the events ascending by offset. The sort is **stable**: events with
 the same offset keep their authoring order, so a burst authored in send order
 fires in send order.
@@ -2427,7 +2977,7 @@ If any event has an invalid `at` duration.
 function toMillis(d): number;
 ```
 
-Resolve a [Duration](#duration) to a millisecond count.
+Resolve a [Duration](#duration-1) to a millisecond count.
 
 A number is returned as-is (after validation); a string is parsed by its
 unit suffix. The result must be a finite, non-negative number.
@@ -2436,7 +2986,7 @@ unit suffix. The result must be a finite, non-negative number.
 
 | Parameter | Type |
 | ------ | ------ |
-| `d` | [`Duration`](#duration) |
+| `d` | [`Duration`](#duration-1) |
 
 #### Returns
 
