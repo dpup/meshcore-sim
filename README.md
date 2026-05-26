@@ -23,11 +23,19 @@ world behind it instead of canned returns.
 
 ```ts
 import { MeshCoreClient } from "@dpup/meshcore-ts";
-import { SimConnection, defineWorld, SimClock, traffic } from "@dpup/meshcore-sim";
+import { SimConnection, defineWorld, SimClock, node, contact, traffic } from "@dpup/meshcore-sim";
 
-const world = defineWorld({ homeNodeId: "home" /* + nodes, channels, contacts */ });
+const world = defineWorld({
+  homeNodeId: "home",
+  nodes: [node("home"), node("alice")],
+  contacts: [contact("Alice", "alice")],
+});
 const clock = new SimClock();
-const sim = new SimConnection({ world, scenario: traffic.burst({ from: "alice", count: 3, within: "10s" }), clock });
+const sim = new SimConnection({
+  world,
+  clock,
+  scenario: traffic.burst({ from: "alice", count: 3, within: "10s" }),
+});
 
 const client = new MeshCoreClient(sim.asConnection(), { autoSync: true });
 client.on("contactMessage", (m) => console.log(m.text));

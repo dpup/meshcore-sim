@@ -47,19 +47,21 @@ The wire has no `decryptVerified` boolean — it is expressed structurally:
 ```
 src/
   index.ts        Public surface (re-exports).
-  world.ts        MeshWorld / SimNode / SimChannel / SimContact types.
+  world.ts        MeshWorld / SimNode / SimChannel / SimContact types + NodeRole / ChannelKind enums.
   builders.ts     defineWorld / node / channel / contact + strong defaults.
-  scenario.ts     Scenario / ScheduledEvent / SimEvent types + builders.
-  clock.ts        SimClock — the virtual clock.
+  scenario.ts     Scenario / ScheduledEvent / SimEvent types + at / scenario builders.
+  clock.ts        SimClock — the virtual clock; Clock interface; TimerHandle.
   connection.ts   SimConnection — the raw Connection drop-in.
   encode.ts       world/event model -> Raw* shapes (keys->bytes, dates->epoch).
   generate.ts     generateWorld() procedural generator.
-  traffic.ts      traffic.burst / crosstalk / quiet / outOfOrder scenarios.
-  random.ts       seeded PRNG (deterministic).
-  serialize.ts    serializeWorld / loadWorld (freeze to a committed fixture).
+  traffic.ts      traffic namespace + burst / crosstalk / quiet / outOfOrder generators.
+  random.ts       SeededRandom — seeded PRNG (deterministic).
+  serialize.ts    serializeWorld / loadWorld / serializeScenario / loadScenario (freeze fixture).
   errors.ts       SimError + device-error injection helpers.
+  duration.ts     Duration type + toMillis() helper.
+  keys.ts         deriveNodeKey() — deterministic public key from node id.
 test/             Vitest unit + integration tests (driven through MeshCoreClient).
-examples/demo.ts  The guided-tour demo.
+examples/demo.ts  The guided-tour demo (run with: bun examples/demo.ts).
 docs/api.md       GENERATED API reference (TypeDoc) — do not hand-edit.
 docs/guide.md     Hand-written concepts & recipes.
 ```
@@ -72,6 +74,8 @@ bun run typecheck   # tsc --noEmit (strict, includes src/test/examples)
 bun run test        # vitest run
 bun run build       # tsc -p tsconfig.build.json
 bun run docs        # regenerate docs/api.md
+bun run docs:check  # verify docs/api.md is in sync with source
+bun examples/demo.ts [--seed <n>]   # the guided tour
 ```
 
 ## Conventions
@@ -83,9 +87,13 @@ bun run docs        # regenerate docs/api.md
   `seed` in, identical fixture out. No wall-clock-derived variation; the
   simulated clock is `SimClock`, never `Date.now()`/`setTimeout`.
 - **One fixture object model.** Generated and hand-written fixtures are the same
-  validated objects, built through the same constructors.
+  validated objects, built through the same constructors (`defineWorld`,
+  `scenario`).
 - **Raw at the boundary.** `SimConnection` speaks `Raw*` shapes and numeric push
   codes; friendly types live in the fixture/authoring layer.
+- **`Clock` interface.** `SimClock` satisfies the exported `Clock` interface
+  structurally — the interface an app injects for time-domain logic. In
+  production the app provides a real implementation; in tests it uses `SimClock`.
 
 ## Don't-regress list
 
@@ -96,9 +104,24 @@ bun run docs        # regenerate docs/api.md
 4. **The provenance table above** is the admin-gate test contract — don't
    collapse verified vs. unverified channel traffic.
 5. **No RF physics / no real crypto** sneaking in via a "smart" generator.
+6. **`sentAt`** on `MessageEvent` / `ChannelMessageEvent` overrides the
+   `senderTimestamp` in the encoded raw shape — enabling out-of-order scenarios
+   without touching arrival time. Don't conflate it with `at`.
 
 ## Testing
 
 The centre of gravity is **integration tests that drive a real `MeshCoreClient`
 over `SimConnection`** and assert on app-visible behavior — never on sim
 internals. That is the proof of drop-in fidelity. No hardware needed.
+
+Key test files and what they cover:
+
+- `test/connection.dynamic.test.ts` — scenario delivery, node-state events,
+  advert/telemetry push codes, the MsgWaiting + drain pattern.
+- `test/provenance.test.ts` — verified vs. unverified channel traffic; the
+  admin-gate negative case.
+- `test/serialize.test.ts` — round-trip exact; frozen-fixture replay through
+  `MeshCoreClient`.
+- `test/traffic.test.ts` — `burst`, `crosstalk`, `quiet`, `outOfOrder` including
+  the `sentAt` reordering model.
+- `test/generate.test.ts` — `generateWorld` determinism; same-path validation.
