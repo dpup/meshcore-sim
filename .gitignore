@@ -5,7 +5,6 @@ docs/.api-tmp/
 *.tsbuildinfo
 .DS_Store
 
-# Sandbox note: `bun install` is blocked by the npm proxy (HTTP 407) here, so
-# deps are installed with `npm install`. The committed lockfile is bun.lock
-# (generated when bun install works); npm's lockfile is ignored meanwhile.
+# bun is the canonical package manager; its lockfile (bun.lockb) is committed.
+# npm's lockfile, if a fallback `npm install` ever writes one, is ignored.
 package-lock.json
