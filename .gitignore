@@ -1,0 +1,11 @@
+node_modules/
+dist/
+docs/.api-tmp/
+*.log
+*.tsbuildinfo
+.DS_Store
+
+# Sandbox note: `bun install` is blocked by the npm proxy (HTTP 407) here, so
+# deps are installed with `npm install`. The committed lockfile is bun.lock
+# (generated when bun install works); npm's lockfile is ignored meanwhile.
+package-lock.json

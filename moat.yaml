@@ -1,11 +1,13 @@
 name: meshcore-sim
 
+runtime: docker
+
 dependencies:
   - bun
   - typescript
   - git
   - gh
-  - node
+  - node@24
   - claude-code
 
 grants:
