@@ -1,0 +1,20 @@
+name: meshcore-sim
+
+dependencies:
+  - bun
+  - typescript
+  - git
+  - gh
+  - node
+  - claude-code
+
+grants:
+  - github
+  - ssh:github.com
+  - claude
+  - npm
+
+volumes:
+  - name: node-modules
+    target: /workspace/node_modules
+
