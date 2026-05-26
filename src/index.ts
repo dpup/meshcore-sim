@@ -68,6 +68,14 @@ export type {
   QuietOptions,
 } from "./traffic.js";
 
+// Serialization — freeze to / load from committed fixture files (M6).
+export {
+  loadScenario,
+  loadWorld,
+  serializeScenario,
+  serializeWorld,
+} from "./serialize.js";
+
 // Errors.
 export { SimError } from "./errors.js";
 

@@ -2840,6 +2840,68 @@ If `nodes < 1`.
 
 ***
 
+### loadScenario()
+
+```ts
+function loadScenario(json): Scenario;
+```
+
+Parse and validate a [Scenario](#scenario) from a JSON string produced by
+[serializeScenario](#serializescenario).
+
+`Uint8Array` fields are decoded from their hex sentinel objects. The events
+are re-validated and sorted through [scenario](#scenario-2) — the single validated
+constructor — so the returned scenario is exactly the same kind of validated,
+sorted object as any other.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `json` | `string` |
+
+#### Returns
+
+[`Scenario`](#scenario)
+
+#### Throws
+
+If the input is not valid JSON, uses the wrong `format`,
+  an unsupported `version`, or fails `scenario()` validation.
+
+***
+
+### loadWorld()
+
+```ts
+function loadWorld(json): MeshWorld;
+```
+
+Parse and validate a [MeshWorld](#meshworld) from a JSON string produced by
+[serializeWorld](#serializeworld).
+
+The parsed nodes, channels, contacts, and `homeNodeId` are re-validated
+through [defineWorld](#defineworld) — the single constructor — so the returned world
+is exactly the same kind of validated, internally consistent object as any
+other world.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `json` | `string` |
+
+#### Returns
+
+[`MeshWorld`](#meshworld)
+
+#### Throws
+
+If the input is not valid JSON, uses the wrong `format`,
+  an unsupported `version`, or fails `defineWorld` validation.
+
+***
+
 ### node()
 
 ```ts
@@ -2968,6 +3030,63 @@ fires in send order.
 #### Throws
 
 If any event has an invalid `at` duration.
+
+***
+
+### serializeScenario()
+
+```ts
+function serializeScenario(s): string;
+```
+
+Serialize a [Scenario](#scenario) to a pretty-printed, deterministic JSON string.
+
+`Uint8Array` fields (e.g. `TelemetryEvent.lppSensorData`) are encoded as
+`{ "$uint8array": "<lowercase-hex>" }` objects so the output is valid JSON
+and fully round-trippable.
+
+Envelope:
+```json
+{ "format": "meshcore-sim/scenario", "version": 1, "scenario": { … } }
+```
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `s` | [`Scenario`](#scenario) |
+
+#### Returns
+
+`string`
+
+***
+
+### serializeWorld()
+
+```ts
+function serializeWorld(world): string;
+```
+
+Serialize a [MeshWorld](#meshworld) to a pretty-printed, deterministic JSON string.
+
+The output is wrapped in a self-describing envelope:
+```json
+{ "format": "meshcore-sim/world", "version": 1, "world": { … } }
+```
+
+The same world always serializes to the same string (deterministic), and a
+serialize → load → serialize cycle yields the identical string (idempotent).
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `world` | [`MeshWorld`](#meshworld) |
+
+#### Returns
+
+`string`
 
 ***
 
