@@ -134,6 +134,21 @@ describe("serializeWorld / loadWorld", () => {
     const scenarioJson = serializeScenario(scn);
     expect(() => loadWorld(scenarioJson)).toThrow(SimError);
   });
+
+  it("loadWorld rejects a corrupt fixture whose homeNodeId is missing from nodes", () => {
+    // Freeze a valid world, then tamper: drop the home node from the serialized
+    // nodes. loadWorld must reject this rather than silently fabricate a fresh
+    // default home node (which would replace the frozen home node's data).
+    const w = defineWorld({
+      homeNodeId: "home",
+      nodes: [node("home", { battery: 5 }), node("rocky")],
+    });
+    const parsed = JSON.parse(serializeWorld(w));
+    parsed.world.nodes = parsed.world.nodes.filter(
+      (n: { id: string }) => n.id !== "home",
+    );
+    expect(() => loadWorld(JSON.stringify(parsed))).toThrow(SimError);
+  });
 });
 
 // ---------------------------------------------------------------------------

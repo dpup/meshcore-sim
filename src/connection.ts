@@ -144,7 +144,13 @@ export class SimConnection extends EventEmitter {
 
   constructor(opts: SimConnectionOptions) {
     super();
-    this.world = opts.world;
+    // Clone the world so this connection owns its mutable state. Scenario
+    // `nodeState` events flip `reachable` in place; without the clone, a world
+    // reused across tests (the idiomatic `const world = defineWorld(...)` shared
+    // at module scope) would be permanently corrupted by one test's timeline,
+    // leaking offline/online state into later tests. The clone isolates every
+    // per-connection mutation from the caller's object.
+    this.world = structuredClone(opts.world);
     this.clock = opts.clock;
     this.scenario = opts.scenario;
   }
@@ -558,7 +564,7 @@ export class SimConnection extends EventEmitter {
   private homeNode(): SimNode {
     const home = this.world.nodes.find((n) => n.id === this.world.homeNodeId);
     if (home === undefined) {
-      throw new Error(`SimConnection: home node "${this.world.homeNodeId}" not found in world`);
+      throw new SimError(`SimConnection: home node "${this.world.homeNodeId}" not found in world`);
     }
     return home;
   }
@@ -571,7 +577,7 @@ export class SimConnection extends EventEmitter {
   private nodeForContactKey(publicKey: string): SimNode {
     const node = this.world.nodes.find((n) => n.publicKey === publicKey);
     if (node === undefined) {
-      throw new Error(`SimConnection: contact key ${publicKey} references no node`);
+      throw new SimError(`SimConnection: contact key ${publicKey} references no node`);
     }
     return node;
   }
@@ -696,6 +702,14 @@ export class SimConnection extends EventEmitter {
         channelData: channelDataOf(channelIdx, textToBytes(event.text), event.snr ?? 0),
       });
       this.emitPush(Constants.PushCodes.MsgWaiting);
+      // channelData carries `snr` but has no rssi field; surface rssi (when set)
+      // on a LogRxData push, matching the verified path and scenario.ts's docs.
+      if (event.rssi !== undefined) {
+        this.emitPush(
+          Constants.PushCodes.LogRxData,
+          logRxDataOf(textToBytes(event.text), event.snr, event.rssi),
+        );
+      }
     }
   }
 

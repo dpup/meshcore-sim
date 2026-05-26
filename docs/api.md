@@ -207,13 +207,15 @@ new SimClock(opts?): SimClock;
 advance(by): void;
 ```
 
-Advance virtual time by `by`, firing every timer whose due time falls
-within `(previousNow, now + by]`, in due-time order (FIFO within the same
-tick).
+Advance virtual time by `by`, firing every pending timer due at or before
+the new time (`dueAt <= previousNow + by`), in due-time order (FIFO within
+the same tick). Any already-due timer — including a zero-delay
+`setTimeout(cb, 0)` and anything overdue — fires too, so `advance(0)` fires
+a zero-delay timer scheduled at the current instant.
 
-Timers scheduled *during* a callback that fall within the remaining window
-also fire in the same `advance` — this lets a chain of timers collapse into
-one call. After all due timers have fired, `now()` is set to exactly
+Timers scheduled *during* a callback that are due within the window also
+fire in the same `advance` — this lets a chain of timers collapse into one
+call. After all due timers have fired, `now()` is set to exactly
 `previousNow + toMillis(by)`.
 
 ###### Parameters

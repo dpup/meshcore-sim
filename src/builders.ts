@@ -163,11 +163,23 @@ export function defineWorld(spec: WorldSpec): MeshWorld {
     seenChannelIdxs.add(c.idx);
   }
 
-  // Every contact must reference a known node.
+  // Every contact must reference a known node, and carry that node's public key.
+  // The `contact()` builder guarantees the key matches; this catches hand-built
+  // literals (or `as SimContact` casts) whose publicKey has drifted from the
+  // node it points at, which would otherwise pass here and throw a confusing
+  // error far away when the connection later resolves the contact by key.
+  const nodesById = new Map(nodes.map((n) => [n.id, n]));
   for (const c of contacts) {
-    if (!seenNodeIds.has(c.nodeId)) {
+    const target = nodesById.get(c.nodeId);
+    if (target === undefined) {
       throw new SimError(
         `Contact "${c.name}" references unknown node id: "${c.nodeId}"`,
+      );
+    }
+    if (c.publicKey !== target.publicKey) {
+      throw new SimError(
+        `Contact "${c.name}" publicKey does not match node "${c.nodeId}" ` +
+          `(use contact("${c.name}", "${c.nodeId}") so the keys line up)`,
       );
     }
   }

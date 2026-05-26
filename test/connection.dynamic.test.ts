@@ -177,3 +177,37 @@ describe("SimConnection dynamic scenario engine", () => {
     expect(tel.pubKeyPrefix).toBe(expectedPrefix);
   });
 });
+
+describe("SimConnection does not mutate the caller's world (cross-test isolation)", () => {
+  it("a nodeState event in one connection does not affect a world reused by another", async () => {
+    // The idiomatic fixture pattern: build one world, reuse it across tests.
+    const world = defineWorld({
+      homeNodeId: "home",
+      nodes: [node("home"), node("rocky", { role: "repeater" })],
+      contacts: [contact("Rocky", "rocky")],
+    });
+    const rockyKey = fromHex(world.nodes.find((n) => n.id === "rocky")!.publicKey);
+
+    // Connection A runs a timeline that takes rocky offline.
+    const clockA = new SimClock();
+    const simA = new SimConnection({
+      world,
+      clock: clockA,
+      scenario: scenario([at("1s", { kind: "nodeState", nodeId: "rocky", reachable: false })]),
+    });
+    const clientA = new MeshCoreClient(simA.asConnection(), { autoSync: true });
+    await clientA.connect();
+    clockA.advance("2s");
+    await expect(clientA.getStatus(rockyKey)).rejects.toBeInstanceOf(MeshCoreError);
+
+    // The shared world object must be untouched.
+    expect(world.nodes.find((n) => n.id === "rocky")!.reachable).toBe(true);
+
+    // Connection B, built from the same world, must see rocky still reachable.
+    const simB = new SimConnection({ world, clock: new SimClock() });
+    const clientB = new MeshCoreClient(simB.asConnection(), { autoSync: false });
+    await clientB.connect();
+    const stats = await clientB.getStatus(rockyKey);
+    expect(stats.batteryMilliVolts).toBeGreaterThan(0);
+  });
+});

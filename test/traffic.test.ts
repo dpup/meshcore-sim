@@ -276,6 +276,25 @@ describe("traffic.outOfOrder", () => {
   it("throws RangeError for count < 2", () => {
     expect(() => outOfOrder({ from: "rocky", count: 1, within: "5s" })).toThrow(RangeError);
   });
+
+  it("places each message in a distinct whole second so the reorder survives second-granular timestamps", () => {
+    // senderTimestamp is whole epoch seconds on the wire; if two messages share a
+    // second the out-of-order property is invisible. sentAt offsets must floor to
+    // distinct seconds (and the reversal must hold at second granularity).
+    const scn = outOfOrder({ from: "rocky", count: 5, within: "10s", seed: 3 });
+    const sentAtSecs = scn.events.map((e) =>
+      e.event.kind === "message" ? Math.floor((e.event.sentAt ?? 0) / 1000) : -1,
+    );
+    expect(new Set(sentAtSecs).size).toBe(5); // all distinct seconds
+    const arrivalSecs = scn.events.map((e) => Math.floor(toMillis(e.at) / 1000));
+    expect(sentAtSecs).toEqual([...arrivalSecs].reverse()); // reversed at second granularity
+  });
+
+  it("throws when the window cannot span `count` distinct seconds", () => {
+    // 2s window cannot hold 4 distinct whole seconds — reject rather than emit a
+    // silently degenerate (same-second) fixture.
+    expect(() => outOfOrder({ from: "rocky", count: 4, within: "2s" })).toThrow(RangeError);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -144,3 +144,26 @@ describe("deriveNodeKey", () => {
     expect(deriveNodeKey("a")).not.toBe(deriveNodeKey("b"));
   });
 });
+
+describe("defineWorld contact/node key consistency", () => {
+  it("accepts contacts built with the contact() helper", () => {
+    expect(() =>
+      defineWorld({
+        homeNodeId: "home",
+        nodes: [node("home"), node("rocky")],
+        contacts: [contact("Rocky", "rocky")],
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects a contact whose publicKey does not match its referenced node", () => {
+    expect(() =>
+      defineWorld({
+        homeNodeId: "home",
+        nodes: [node("home"), node("rocky")],
+        // Hand-built literal with a key that has drifted from the node it points at.
+        contacts: [{ name: "Bad", nodeId: "rocky", publicKey: "0".repeat(64) }],
+      }),
+    ).toThrow(SimError);
+  });
+});

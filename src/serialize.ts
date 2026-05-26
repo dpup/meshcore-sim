@@ -277,6 +277,19 @@ export function loadWorld(json: string): MeshWorld {
     );
   }
 
+  // A serialized world always contains its home node. If the fixture is missing
+  // it (truncated/hand-edited/corrupt), reject rather than let defineWorld
+  // silently *fabricate* a fresh default home node — loadWorld must faithfully
+  // reconstruct what was frozen, not invent data.
+  const hasHomeNode = nodes.some(
+    (n) => typeof n === "object" && n !== null && (n as Record<string, unknown>)["id"] === homeNodeId,
+  );
+  if (!hasHomeNode) {
+    throw new SimError(
+      `loadWorld: corrupt fixture — homeNodeId "${homeNodeId}" is not among the serialized nodes`,
+    );
+  }
+
   // Re-validate through defineWorld, passing nodes as full SimNode objects so
   // defineWorld does not re-apply defaults (string nodes would get defaulted
   // over the loaded values). The builder accepts `SimNode | string` entries

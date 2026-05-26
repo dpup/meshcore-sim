@@ -276,17 +276,38 @@ export function outOfOrder(opts: OutOfOrderOptions): Scenario {
   const rng = new SeededRandom(opts.seed ?? DEFAULT_SEED);
   const windowMs = toMillis(opts.within);
 
-  // Generate `count` distinct arrival offsets in [0, windowMs) and sort them.
-  const arrivalOffsets: number[] = Array.from(
-    { length: opts.count },
-    () => Math.floor(rng.next() * windowMs),
-  );
-  arrivalOffsets.sort((a, b) => a - b);
+  // MeshCore sender timestamps are whole epoch SECONDS on the wire, so two
+  // messages sent in the same second are indistinguishable to a consumer that
+  // reorders by sender timestamp — which would silently defeat this generator.
+  // Give each message a DISTINCT whole second within the window (plus sub-second
+  // jitter for realism), so the out-of-order property survives end to end. This
+  // needs the window to span at least `count` whole seconds.
+  const windowSeconds = Math.floor(windowMs / 1000);
+  if (windowSeconds < opts.count) {
+    throw new RangeError(
+      `outOfOrder: \`within\` (${windowMs}ms) must span at least \`count\` (${opts.count}) whole ` +
+        `seconds — sender timestamps are second-granular, so closer spacing would collapse the ` +
+        `out-of-order property. Widen \`within\` or lower \`count\`.`,
+    );
+  }
 
-  // sentAt values are the same set of offsets but in reversed order, so
-  // arrival[0] has sentAt = arrival[count-1], arrival[1] has sentAt = arrival[count-2], etc.
-  // This guarantees arrival order ≠ sender-timestamp order (for count >= 2 with
-  // distinct offsets; duplicates are possible but the reversal still inverts).
+  // Pick `count` distinct whole seconds in [0, windowSeconds) via a seeded
+  // partial Fisher–Yates shuffle, add sub-second jitter, and sort ascending.
+  const seconds = Array.from({ length: windowSeconds }, (_, i) => i);
+  for (let i = 0; i < opts.count; i++) {
+    const j = rng.int(i, seconds.length - 1);
+    const tmp = seconds[i]!;
+    seconds[i] = seconds[j]!;
+    seconds[j] = tmp;
+  }
+  const arrivalOffsets = seconds
+    .slice(0, opts.count)
+    .map((s) => s * 1000 + rng.int(0, 999))
+    .sort((a, b) => a - b);
+
+  // sentAt values are the same offsets reversed, so the first-arriving message
+  // has the largest sender timestamp and vice versa. Because the arrivals sit in
+  // distinct seconds, the reversal is observable at second granularity.
   const sentAtOffsets = [...arrivalOffsets].reverse();
 
   const events = arrivalOffsets.map((arrivalMs, i) => {

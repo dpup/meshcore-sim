@@ -100,4 +100,28 @@ describe("provenance: verified vs. unverified channel traffic (the admin-gate co
     expect(msg.pubKeyPrefix).toBe(expectedPrefix);
     expect(msg.text).toBe("ping");
   });
+
+  it("surfaces rssi on the unverified path (channelData has no rssi field, so it rides logRxData)", async () => {
+    const scn = scenario([
+      at("1s", {
+        kind: "channelMessage",
+        channel: ADMIN_CHANNEL_IDX,
+        text: "reboot now",
+        verified: false,
+        snr: 6,
+        rssi: -97,
+      }),
+    ]);
+    const { client, clock } = await setup(scn);
+
+    const data = nextEvent(client, "channelData");
+    const log = nextEvent(client, "logRxData");
+    clock.advance("2s");
+
+    const [raw] = await data;
+    expect(raw.snr).toBe(6); // snr rides on channelData
+    const [rx] = await log;
+    expect(rx.lastRssi).toBe(-97); // rssi rides on the logRxData push
+    expect(rx.lastSnr).toBe(6);
+  });
 });
