@@ -78,6 +78,12 @@ bun run docs:check  # verify docs/api.md is in sync with source
 bun examples/demo.ts [--seed <n>]   # the guided tour
 ```
 
+**Use bun >= 1.2** (`engines.bun` + `moat.yaml` pin it). The committed lockfile
+is the text `bun.lock`; bun 1.1.x writes the legacy binary `bun.lockb` instead
+(gitignored), which churns and is unreviewable. `/workspace` is a shared mount,
+so the sandbox and host must run the same bun major.minor to avoid lockfile
+fights. CI uses `bun-version: latest`.
+
 ## Conventions
 
 - **ESM-only, Node-only.** `module`/`moduleResolution: NodeNext`; `.js` import
