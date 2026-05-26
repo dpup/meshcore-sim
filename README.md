@@ -44,6 +44,15 @@ await client.connect();
 clock.advance("10s"); // 3 messages arrive in compressed virtual time
 ```
 
+The three messages arrive in their (seeded, jittered) order — instantly, no real
+seconds spent:
+
+```text
+msg 0
+msg 2
+msg 1
+```
+
 ## Why
 
 The most logic-dense, bug-prone parts of a MeshCore app are barely testable any
@@ -66,14 +75,74 @@ ESM-only, **Node.js ≥ 18**. Bring your own `@dpup/meshcore-ts` and
 - **[Guide](./docs/guide.md)** — concepts and recipes.
 - **[API reference](./docs/api.md)** — the complete, generated reference.
 
-## Examples
+## See it in action
 
-- [`examples/demo.ts`](examples/demo.ts) — a guided tour: build a world, drive it
-  through a real `MeshCoreClient`, watch traffic arrive in virtual time.
+[`examples/demo.ts`](examples/demo.ts) is a guided tour — it builds a world,
+drives it through a real `MeshCoreClient`, and walks the whole feature set. No
+hardware, fully deterministic:
 
 ```sh
-bun examples/demo.ts
+bun examples/demo.ts          # or --seed <n> / a positional seed
 ```
+
+```text
+meshcore-sim — guided tour
+a real MeshCoreClient driven over a simulated Connection (seed 42)
+
+1. Build a world
+────────────────────────────────────────────────────────────
+   4 nodes (3 reachable, 1 offline), 2 channels, 3 contacts
+     • Home Base    home       online
+     • Rocky Ridge  repeater   online
+     • Cedar Creek  companion  online
+     • Silent Peak  repeater   offline
+     # ch0 public   public
+     # ch1 ops      private
+
+2. Connect
+────────────────────────────────────────────────────────────
+   connected to "Home Base" d54ca596335b… freq=910525kHz sf=10
+   a MeshCoreClient cannot tell this from a real radio.
+
+3. Static reads
+────────────────────────────────────────────────────────────
+   3 contacts:
+     • Rocky Ridge  3f997cdbe620…
+     • Cedar Creek  3d4098fbaa16…
+     • Silent Peak  ba14fa6ded11…
+   2 channels:
+     # ch0 public
+     # ch1 ops
+   ✓ status Rocky Ridge: battery=4.20V uptime=0s rx=0 tx=0
+   ✗ status Silent Peak: unreachable (Device error: not found)
+
+4. Dynamic traffic in virtual time
+────────────────────────────────────────────────────────────
+   scheduled a 4-message burst across a 10s window…
+   t+04.482s  MESSAGE 3f997cdbe620 "msg 1"
+   t+06.011s  MESSAGE 3f997cdbe620 "msg 0"
+   t+06.697s  MESSAGE 3f997cdbe620 "msg 3"
+   t+08.524s  MESSAGE 3f997cdbe620 "msg 2"
+   ↑ 4 messages spanning 8.52s of mesh time replayed in zero real seconds — that is the virtual clock.
+
+5. Provenance: verified vs. unverified
+────────────────────────────────────────────────────────────
+   t+03.000s  ✓ VERIFIED   decrypt-verified on ch1 (ops): "status: all green"
+   t+03.000s  ⚠ UNVERIFIED raw datagram on admin ch7: 10 bytes (snr 7), never decoded
+   the admin-gate point: the unverified datagram surfaces only as raw bytes — it
+   can never arrive as a verified channelMessage, so a gate keyed on verification
+   correctly rejects it.
+
+6. Determinism & freezing
+────────────────────────────────────────────────────────────
+   ✓ two generateWorld(42) runs are identical — deterministic, byte for byte.
+   ✓ loadWorld() round-trips the snapshot exactly — freeze once, replay forever.
+
+✓ tour complete — a full mesh app workflow, no radio, fully reproducible.
+```
+
+> In a real terminal the tour is ANSI-colored; re-run it with any `--seed` and
+> the output is identical every time.
 
 ## Development
 
