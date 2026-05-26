@@ -28,7 +28,595 @@ const client = new MeshCoreClient(sim.asConnection());
 await client.connect();
 ```
 
+## Classes
+
+### SeededRandom
+
+A small, deterministic 32-bit PRNG seeded from a single integer.
+
+#### Constructors
+
+##### Constructor
+
+```ts
+new SeededRandom(seed): SeededRandom;
+```
+
+###### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `seed` | `number` | Any integer. The same seed always produces the same sequence; the value is masked to 32 bits. |
+
+###### Returns
+
+[`SeededRandom`](#seededrandom)
+
+#### Methods
+
+##### bool()
+
+```ts
+bool(p?): boolean;
+```
+
+A biased coin flip. Returns `true` with probability `p`.
+
+###### Parameters
+
+| Parameter | Type | Default value | Description |
+| ------ | ------ | ------ | ------ |
+| `p` | `number` | `0.5` | Probability of `true`, in `[0, 1]`. Defaults to `0.5`. |
+
+###### Returns
+
+`boolean`
+
+##### bytes()
+
+```ts
+bytes(n): Uint8Array;
+```
+
+A deterministic buffer of `n` random bytes (each `0..255`).
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `n` | `number` |
+
+###### Returns
+
+`Uint8Array`
+
+##### int()
+
+```ts
+int(minInclusive, maxInclusive): number;
+```
+
+Integer in the inclusive range `[minInclusive, maxInclusive]`.
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `minInclusive` | `number` |
+| `maxInclusive` | `number` |
+
+###### Returns
+
+`number`
+
+###### Throws
+
+If `minInclusive > maxInclusive`.
+
+##### next()
+
+```ts
+next(): number;
+```
+
+Next float in the half-open interval `[0, 1)`.
+
+###### Returns
+
+`number`
+
+##### pick()
+
+```ts
+pick<T>(items): T;
+```
+
+Pick a uniformly random element from a non-empty array.
+
+###### Type Parameters
+
+| Type Parameter |
+| ------ |
+| `T` |
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `items` | readonly `T`[] |
+
+###### Returns
+
+`T`
+
+###### Throws
+
+If `items` is empty.
+
+***
+
+### SimError
+
+Base class for every error thrown by the simulator.
+
+#### Extends
+
+- `Error`
+
+#### Constructors
+
+##### Constructor
+
+```ts
+new SimError(message, options?): SimError;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `message` | `string` |
+| `options?` | \{ `cause?`: `unknown`; \} |
+| `options.cause?` | `unknown` |
+
+###### Returns
+
+[`SimError`](#simerror)
+
+###### Overrides
+
+```ts
+Error.constructor
+```
+
+## Interfaces
+
+### MeshWorld
+
+A simulated mesh as observable through the home node — the static fixture.
+
+Built and validated through `defineWorld`, never assembled by hand, so
+hand-written and generated worlds are the same kind of validated object
+(PRD §4, "one fixture object model").
+
+#### Properties
+
+##### channels
+
+```ts
+channels: SimChannel[];
+```
+
+Configured channels.
+
+##### contacts
+
+```ts
+contacts: SimContact[];
+```
+
+Contacts stored on the home device.
+
+##### homeNodeId
+
+```ts
+homeNodeId: string;
+```
+
+Id of the node the app connects to. Must reference a node in `nodes`.
+
+##### nodes
+
+```ts
+nodes: SimNode[];
+```
+
+The home node plus reachable remote nodes.
+
+***
+
+### RadioConfig
+
+A node's LoRa radio configuration.
+
+Mirrors the radio fields meshcore-ts surfaces on `SelfInfo`
+(`radioFreq`/`radioBw`/`radioSf`/`radioCr`), so the encode layer can copy
+them straight onto a `RawSelfInfo`.
+
+#### Properties
+
+##### bw
+
+```ts
+bw: number;
+```
+
+Bandwidth, in kHz.
+
+##### cr
+
+```ts
+cr: number;
+```
+
+Coding rate denominator (an integer, typically 5–8).
+
+##### freq
+
+```ts
+freq: number;
+```
+
+Centre frequency, in kHz.
+
+##### sf
+
+```ts
+sf: number;
+```
+
+Spreading factor (an integer, typically 7–12).
+
+##### txPower?
+
+```ts
+optional txPower?: number;
+```
+
+Transmit power, in dBm.
+
+***
+
+### SimChannel
+
+A configured channel slot on the home device.
+
+The `secret` is hex (the well-known public key for `public` channels, a
+per-channel secret for `private` ones). Whether the device holds a usable
+key for a channel determines whether traffic on it decrypt-verifies.
+
+#### Properties
+
+##### idx
+
+```ts
+idx: number;
+```
+
+Channel slot index, unique within a world.
+
+##### kind
+
+```ts
+kind: ChannelKind;
+```
+
+Whether the channel is public or private.
+
+##### name
+
+```ts
+name: string;
+```
+
+Channel display name.
+
+##### secret
+
+```ts
+secret: string;
+```
+
+Channel secret, lowercase hex.
+
+***
+
+### SimContact
+
+A contact stored on the home device, pointing at a node in the world.
+
+#### Properties
+
+##### name
+
+```ts
+name: string;
+```
+
+Advertised display name.
+
+##### nodeId
+
+```ts
+nodeId: string;
+```
+
+Id of the [SimNode](#simnode) this contact refers to.
+
+##### publicKey
+
+```ts
+publicKey: string;
+```
+
+32-byte public key, lowercase hex (matches the referenced node's key).
+
+***
+
+### SimNode
+
+A node in the simulated mesh — the home node or a reachable remote node.
+
+Carries everything the encode layer needs to synthesize a `RawSelfInfo`
+(for the home node), a `RawContact` (for remote nodes), and a
+`RawRepeaterStats` (for repeaters): identity, role, radio config, position,
+battery, and firmware/model defaults.
+
+#### Properties
+
+##### adminCommands?
+
+```ts
+optional adminCommands?: string[];
+```
+
+Admin commands this node accepts (drives admin-gate test cases).
+
+##### battery?
+
+```ts
+optional battery?: number;
+```
+
+Battery level as a percentage `0..100`.
+
+##### firmwareVer?
+
+```ts
+optional firmwareVer?: number;
+```
+
+Firmware version reported by the device.
+
+##### id
+
+```ts
+id: string;
+```
+
+Stable, human-readable identifier, unique within a world.
+
+##### lat?
+
+```ts
+optional lat?: number;
+```
+
+Advertised latitude, in degrees.
+
+##### lon?
+
+```ts
+optional lon?: number;
+```
+
+Advertised longitude, in degrees.
+
+##### model?
+
+```ts
+optional model?: string;
+```
+
+Manufacturer / model string reported by the device.
+
+##### name
+
+```ts
+name: string;
+```
+
+Advertised display name. Defaults to [SimNode.id](#id).
+
+##### publicKey
+
+```ts
+publicKey: string;
+```
+
+32-byte public key, lowercase hex, derived deterministically from the id.
+
+##### radioConfig?
+
+```ts
+optional radioConfig?: RadioConfig;
+```
+
+LoRa radio configuration.
+
+##### reachable
+
+```ts
+reachable: boolean;
+```
+
+Whether the node answers queries. An unreachable node rejects reads the
+way an offline device would, so the app surfaces a typed error.
+
+##### role
+
+```ts
+role: NodeRole;
+```
+
+Advertised role.
+
+***
+
+### WorldSpec
+
+Spec accepted by [defineWorld](#defineworld).
+
+#### Properties
+
+##### channels?
+
+```ts
+optional channels?: SimChannel[];
+```
+
+Channels. Defaults to none.
+
+##### contacts?
+
+```ts
+optional contacts?: SimContact[];
+```
+
+Contacts. Defaults to none.
+
+##### homeNodeId
+
+```ts
+homeNodeId: string;
+```
+
+Id of the node the app connects to.
+
+##### nodes?
+
+```ts
+optional nodes?: (string | SimNode)[];
+```
+
+Nodes in the world. A bare string is normalized through [node](#node) with
+all defaults. If omitted, a default home node is created from `homeNodeId`.
+
+## Type Aliases
+
+### ChannelKind
+
+```ts
+type ChannelKind = typeof ChannelKind[keyof typeof ChannelKind];
+```
+
+Whether a channel's secret is the well-known public key or a private one.
+
+Drives decrypt-verification outcomes in the dynamic layer: traffic on a
+`private` channel the device cannot decrypt surfaces as unverified
+`channelData`, never a verified `channelMessage` (PRD §5, the provenance
+contract).
+
+***
+
+### Duration
+
+```ts
+type Duration = number | string;
+```
+
+A span of simulated time.
+
+Either a number of milliseconds, or a string with a unit suffix:
+`"500ms"`, `"30s"`, `"2m"`, `"1h"`. The numeric part may be fractional
+(e.g. `"1.5s"`).
+
+***
+
+### NodeRole
+
+```ts
+type NodeRole = typeof NodeRole[keyof typeof NodeRole];
+```
+
+The role a node advertises on the mesh.
+
+The encode layer maps these to meshcore's `AdvType`:
+`companion → Chat`, `repeater → Repeater`, `roomserver → Room`.
+
 ## Variables
+
+### ChannelKind
+
+```ts
+const ChannelKind: object;
+```
+
+Whether a channel's secret is the well-known public key or a private one.
+
+Drives decrypt-verification outcomes in the dynamic layer: traffic on a
+`private` channel the device cannot decrypt surfaces as unverified
+`channelData`, never a verified `channelMessage` (PRD §5, the provenance
+contract).
+
+#### Type Declaration
+
+##### Private
+
+```ts
+readonly Private: "private" = "private";
+```
+
+##### Public
+
+```ts
+readonly Public: "public" = "public";
+```
+
+***
+
+### NodeRole
+
+```ts
+const NodeRole: object;
+```
+
+The role a node advertises on the mesh.
+
+The encode layer maps these to meshcore's `AdvType`:
+`companion → Chat`, `repeater → Repeater`, `roomserver → Room`.
+
+#### Type Declaration
+
+##### Companion
+
+```ts
+readonly Companion: "companion" = "companion";
+```
+
+##### Repeater
+
+```ts
+readonly Repeater: "repeater" = "repeater";
+```
+
+##### RoomServer
+
+```ts
+readonly RoomServer: "roomserver" = "roomserver";
+```
+
+***
 
 ### VERSION
 
@@ -37,3 +625,164 @@ const VERSION: "0.1.0" = "0.1.0";
 ```
 
 The package version (kept in sync with package.json at release time).
+
+## Functions
+
+### channel()
+
+```ts
+function channel(
+   idx, 
+   name, 
+   overrides?): SimChannel;
+```
+
+Build a fully-formed [SimChannel](#simchannel) from a slot index and name.
+
+Defaults: `kind: "public"` and a deterministic `secret` derived from the
+name (so the same channel name always yields the same secret).
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `idx` | `number` |
+| `name` | `string` |
+| `overrides` | `Partial`\<`Omit`\<[`SimChannel`](#simchannel), `"idx"` \| `"name"`\>\> |
+
+#### Returns
+
+[`SimChannel`](#simchannel)
+
+***
+
+### contact()
+
+```ts
+function contact(name, nodeId): SimContact;
+```
+
+Build a [SimContact](#simcontact) pointing at a node, deriving its public key from
+the referenced node id so the contact and node line up.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `name` | `string` |
+| `nodeId` | `string` |
+
+#### Returns
+
+[`SimContact`](#simcontact)
+
+***
+
+### defineWorld()
+
+```ts
+function defineWorld(spec): MeshWorld;
+```
+
+Assemble and validate a [MeshWorld](#meshworld) — the single constructor every
+world passes through.
+
+String node entries are normalized through [node](#node). If no node matches
+`homeNodeId` (including when `nodes` is omitted entirely), a default home
+node is created.
+
+Validates that node ids are unique, channel indices are unique, every
+contact references a known node, and `homeNodeId` references a known node.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `spec` | [`WorldSpec`](#worldspec) |
+
+#### Returns
+
+[`MeshWorld`](#meshworld)
+
+#### Throws
+
+On any validation failure.
+
+***
+
+### deriveNodeKey()
+
+```ts
+function deriveNodeKey(id): string;
+```
+
+Derive a stable 32-byte public key for a node id, as lowercase hex.
+
+Same id ⇒ same 64-character hex string, every run, with no seed. Different
+ids produce different keys with overwhelming probability.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `id` | `string` |
+
+#### Returns
+
+`string`
+
+***
+
+### node()
+
+```ts
+function node(id, overrides?): SimNode;
+```
+
+Build a fully-formed [SimNode](#simnode) from an id, defaulting everything else.
+
+Defaults: `role: "companion"`, `reachable: true`, full battery, the standard
+radio preset, `name` equal to `id`, and a `publicKey` derived
+deterministically from `id`. Override only the fields a test cares about.
+
+`id` and `publicKey` cannot be overridden: the key is a pure function of the
+id, so allowing either to diverge would break the world's internal
+consistency.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `id` | `string` |
+| `overrides` | `Partial`\<`Omit`\<[`SimNode`](#simnode), `"id"` \| `"publicKey"`\>\> |
+
+#### Returns
+
+[`SimNode`](#simnode)
+
+***
+
+### toMillis()
+
+```ts
+function toMillis(d): number;
+```
+
+Resolve a [Duration](#duration) to a millisecond count.
+
+A number is returned as-is (after validation); a string is parsed by its
+unit suffix. The result must be a finite, non-negative number.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `d` | [`Duration`](#duration) |
+
+#### Returns
+
+`number`
+
+#### Throws
+
+If the value is not a valid, non-negative duration.

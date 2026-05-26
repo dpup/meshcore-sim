@@ -25,3 +25,26 @@
 
 /** The package version (kept in sync with package.json at release time). */
 export const VERSION = "0.1.0";
+
+// World builders (the single validated constructor path) + the seeded PRNG.
+export { channel, contact, defineWorld, node } from "./builders.js";
+export type { WorldSpec } from "./builders.js";
+export { SeededRandom } from "./random.js";
+
+// Deterministic helpers.
+export { toMillis } from "./duration.js";
+export type { Duration } from "./duration.js";
+export { deriveNodeKey } from "./keys.js";
+
+// Errors.
+export { SimError } from "./errors.js";
+
+// Static fixture object model (value enums + types).
+export { ChannelKind, NodeRole } from "./world.js";
+export type {
+  MeshWorld,
+  RadioConfig,
+  SimChannel,
+  SimContact,
+  SimNode,
+} from "./world.js";
