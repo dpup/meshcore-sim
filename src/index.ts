@@ -40,6 +40,10 @@ export { deriveNodeKey } from "./keys.js";
 export { SimClock } from "./clock.js";
 export type { Clock, TimerHandle } from "./clock.js";
 
+// The raw `Connection` drop-in — inject into a `MeshCoreClient`.
+export { SimConnection } from "./connection.js";
+export type { SimConnectionOptions } from "./connection.js";
+
 // Errors.
 export { SimError } from "./errors.js";
 

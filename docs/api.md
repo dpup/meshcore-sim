@@ -11,7 +11,7 @@ testing `@dpup/meshcore-ts` / `@liamcottle/meshcore.js` apps without radios.
 
 It models the *observable behavior* of a mesh — message arrival, ordering,
 loss, signal metadata, node state, channel and decrypt outcomes — not RF
-physics. SimConnection is a drop-in for a meshcore.js `Connection`:
+physics. [SimConnection](#simconnection) is a drop-in for a meshcore.js `Connection`:
 inject it where an app would use a real TCP/serial connection, drive a
 [SimClock](#simclock), and assert on what the app observed.
 
@@ -421,6 +421,876 @@ If `delay` is not a valid [Duration](#duration).
 
 ***
 
+### SimConnection
+
+A drop-in for a raw meshcore.js `Connection` backed by a [MeshWorld](#meshworld).
+
+#### Example
+
+```ts
+const world = defineWorld({ homeNodeId: "home" });
+const sim = new SimConnection({ world, clock: new SimClock() });
+const client = new MeshCoreClient(sim.asConnection());
+await client.connect();
+```
+
+#### Extends
+
+- `EventEmitter`
+
+#### Constructors
+
+##### Constructor
+
+```ts
+new SimConnection(opts): SimConnection;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `opts` | [`SimConnectionOptions`](#simconnectionoptions) |
+
+###### Returns
+
+[`SimConnection`](#simconnection)
+
+###### Overrides
+
+```ts
+EventEmitter.constructor
+```
+
+#### Methods
+
+##### addOrUpdateContact()
+
+```ts
+addOrUpdateContact(
+   _publicKey, 
+   _type, 
+   _flags, 
+   _outPathLen, 
+   _outPath, 
+   _advName, 
+   _lastAdvert, 
+   _advLat, 
+_advLon): Promise<void>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_publicKey` | `Uint8Array` |
+| `_type` | `number` |
+| `_flags` | `number` |
+| `_outPathLen` | `number` |
+| `_outPath` | `Uint8Array` |
+| `_advName` | `string` |
+| `_lastAdvert` | `number` |
+| `_advLat` | `number` |
+| `_advLon` | `number` |
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### asConnection()
+
+```ts
+asConnection(): Connection;
+```
+
+Cast to the `Connection` type the client expects. Mirrors
+`FakeConnection.asConnection()`: `SimConnection` is structurally a
+`Connection` but extends Node's `EventEmitter`, so the cast bridges the two.
+
+###### Returns
+
+`Connection`
+
+##### clearFloodScope()
+
+```ts
+clearFloodScope(): Promise<unknown>;
+```
+
+###### Returns
+
+`Promise`\<`unknown`\>
+
+##### close()
+
+```ts
+close(): Promise<void>;
+```
+
+Close the connection: emit `disconnected` and resolve.
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### connect()
+
+```ts
+connect(): Promise<void>;
+```
+
+Open the connection. Resolves and emits `connected` so
+`MeshCoreClient.connect()` resolves.
+
+The `connected` event fires on the microtask queue (via `queueMicrotask`),
+not the `SimClock` — connect is test setup and must resolve promptly,
+before any `clock.advance()`.
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### deleteChannel()
+
+```ts
+deleteChannel(_channelIdx): Promise<void>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_channelIdx` | `number` |
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### deviceQuery()
+
+```ts
+deviceQuery(_appTargetVer): Promise<RawDeviceInfo>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_appTargetVer` | `number` |
+
+###### Returns
+
+`Promise`\<`RawDeviceInfo`\>
+
+##### exportContact()
+
+```ts
+exportContact(_pubKey?): Promise<{
+  advertPacketBytes: Uint8Array;
+}>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_pubKey?` | `Uint8Array`\<`ArrayBufferLike`\> \| `null` |
+
+###### Returns
+
+`Promise`\<\{
+  `advertPacketBytes`: `Uint8Array`;
+\}\>
+
+##### exportPrivateKey()
+
+```ts
+exportPrivateKey(): Promise<{
+  privateKey: Uint8Array;
+}>;
+```
+
+###### Returns
+
+`Promise`\<\{
+  `privateKey`: `Uint8Array`;
+\}\>
+
+##### findChannelByName()
+
+```ts
+findChannelByName(name): Promise<RawChannel | undefined>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `name` | `string` |
+
+###### Returns
+
+`Promise`\<`RawChannel` \| `undefined`\>
+
+##### findChannelBySecret()
+
+```ts
+findChannelBySecret(secret): Promise<RawChannel | undefined>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `secret` | `Uint8Array` |
+
+###### Returns
+
+`Promise`\<`RawChannel` \| `undefined`\>
+
+##### findContactByName()
+
+```ts
+findContactByName(name): Promise<RawContact | undefined>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `name` | `string` |
+
+###### Returns
+
+`Promise`\<`RawContact` \| `undefined`\>
+
+##### findContactByPublicKeyPrefix()
+
+```ts
+findContactByPublicKeyPrefix(prefix): Promise<RawContact | undefined>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `prefix` | `Uint8Array` |
+
+###### Returns
+
+`Promise`\<`RawContact` \| `undefined`\>
+
+##### getBatteryVoltage()
+
+```ts
+getBatteryVoltage(): Promise<RawBatteryVoltage>;
+```
+
+###### Returns
+
+`Promise`\<`RawBatteryVoltage`\>
+
+##### getChannel()
+
+```ts
+getChannel(channelIdx): Promise<RawChannel>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `channelIdx` | `number` |
+
+###### Returns
+
+`Promise`\<`RawChannel`\>
+
+##### getChannels()
+
+```ts
+getChannels(): Promise<RawChannel[]>;
+```
+
+###### Returns
+
+`Promise`\<`RawChannel`[]\>
+
+##### getContacts()
+
+```ts
+getContacts(): Promise<RawContact[]>;
+```
+
+Return one `RawContact` per `world.contacts`, resolving each contact's
+referenced node for role/position. This is the contacts model: a "contact"
+the client sees is a `SimContact` pointing at a `SimNode`. Remote reads
+(`getStatus`/`getTelemetry`/`getNeighbours`) resolve the same nodes by the
+key passed in (which equals the contact's `publicKey`).
+
+###### Returns
+
+`Promise`\<`RawContact`[]\>
+
+##### getDeviceTime()
+
+```ts
+getDeviceTime(): Promise<RawCurrTime>;
+```
+
+###### Returns
+
+`Promise`\<`RawCurrTime`\>
+
+##### getNeighbours()
+
+```ts
+getNeighbours(
+   publicKey, 
+   _count?, 
+   _offset?, 
+   _orderBy?, 
+_pubKeyPrefixLength?): Promise<RawNeighboursResult>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `publicKey` | `Uint8Array` |
+| `_count?` | `number` |
+| `_offset?` | `number` |
+| `_orderBy?` | `number` |
+| `_pubKeyPrefixLength?` | `number` |
+
+###### Returns
+
+`Promise`\<`RawNeighboursResult`\>
+
+##### getSelfInfo()
+
+```ts
+getSelfInfo(): Promise<RawSelfInfo>;
+```
+
+###### Returns
+
+`Promise`\<`RawSelfInfo`\>
+
+##### getStats()
+
+```ts
+getStats(statsType): Promise<RawStats>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `statsType` | `number` |
+
+###### Returns
+
+`Promise`\<`RawStats`\>
+
+##### getStatsCore()
+
+```ts
+getStatsCore(): Promise<RawStats>;
+```
+
+###### Returns
+
+`Promise`\<`RawStats`\>
+
+##### getStatsPackets()
+
+```ts
+getStatsPackets(): Promise<RawStats>;
+```
+
+###### Returns
+
+`Promise`\<`RawStats`\>
+
+##### getStatsRadio()
+
+```ts
+getStatsRadio(): Promise<RawStats>;
+```
+
+###### Returns
+
+`Promise`\<`RawStats`\>
+
+##### getStatus()
+
+```ts
+getStatus(contactPublicKey): Promise<RawRepeaterStats>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `contactPublicKey` | `Uint8Array` |
+
+###### Returns
+
+`Promise`\<`RawRepeaterStats`\>
+
+##### getTelemetry()
+
+```ts
+getTelemetry(contactPublicKey): Promise<RawTelemetryResponse>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `contactPublicKey` | `Uint8Array` |
+
+###### Returns
+
+`Promise`\<`RawTelemetryResponse`\>
+
+##### getWaitingMessages()
+
+```ts
+getWaitingMessages(): Promise<RawWaitingMessage[]>;
+```
+
+No queued messages yet — the device queue is filled by the M4 scenario engine.
+
+###### Returns
+
+`Promise`\<`RawWaitingMessage`[]\>
+
+##### importContact()
+
+```ts
+importContact(_advertPacketBytes): Promise<void>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_advertPacketBytes` | `Uint8Array` |
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### importPrivateKey()
+
+```ts
+importPrivateKey(_privateKey): Promise<void>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_privateKey` | `Uint8Array` |
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### login()
+
+```ts
+login(
+   contactPublicKey, 
+   _password, 
+_extraTimeoutMillis?): Promise<RawLoginSuccess>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `contactPublicKey` | `Uint8Array` |
+| `_password` | `string` |
+| `_extraTimeoutMillis?` | `number` |
+
+###### Returns
+
+`Promise`\<`RawLoginSuccess`\>
+
+##### reboot()
+
+```ts
+reboot(): Promise<void>;
+```
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### removeContact()
+
+```ts
+removeContact(_pubKey): Promise<void>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_pubKey` | `Uint8Array` |
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### resetPath()
+
+```ts
+resetPath(_pubKey): Promise<void>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_pubKey` | `Uint8Array` |
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### sendAdvert()
+
+```ts
+sendAdvert(_type): Promise<void>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_type` | `number` |
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### sendBinaryRequest()
+
+```ts
+sendBinaryRequest(
+   _contactPublicKey, 
+   _requestCodeAndParams, 
+_extraTimeoutMillis?): Promise<Uint8Array<ArrayBufferLike>>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_contactPublicKey` | `Uint8Array` |
+| `_requestCodeAndParams` | `Uint8Array` |
+| `_extraTimeoutMillis?` | `number` |
+
+###### Returns
+
+`Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
+
+##### sendChannelTextMessage()
+
+```ts
+sendChannelTextMessage(_channelIdx, _text): Promise<void>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_channelIdx` | `number` |
+| `_text` | `string` |
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### sendFloodAdvert()
+
+```ts
+sendFloodAdvert(): Promise<void>;
+```
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### sendTextMessage()
+
+```ts
+sendTextMessage(
+   _contactPublicKey, 
+   _text, 
+_type?): Promise<RawSent>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_contactPublicKey` | `Uint8Array` |
+| `_text` | `string` |
+| `_type?` | `number` |
+
+###### Returns
+
+`Promise`\<`RawSent`\>
+
+##### sendZeroHopAdvert()
+
+```ts
+sendZeroHopAdvert(): Promise<void>;
+```
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### setAdvertLatLong()
+
+```ts
+setAdvertLatLong(_latitude, _longitude): Promise<void>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_latitude` | `number` |
+| `_longitude` | `number` |
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### setAdvertName()
+
+```ts
+setAdvertName(_name): Promise<void>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_name` | `string` |
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### setAutoAddContacts()
+
+```ts
+setAutoAddContacts(): Promise<void>;
+```
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### setChannel()
+
+```ts
+setChannel(
+   _channelIdx, 
+   _name, 
+_secret): Promise<void>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_channelIdx` | `number` |
+| `_name` | `string` |
+| `_secret` | `Uint8Array` |
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### setDeviceTime()
+
+```ts
+setDeviceTime(_epochSecs): Promise<void>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_epochSecs` | `number` |
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### setFloodScope()
+
+```ts
+setFloodScope(_transportKey): Promise<unknown>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_transportKey` | `Uint8Array` |
+
+###### Returns
+
+`Promise`\<`unknown`\>
+
+##### setManualAddContacts()
+
+```ts
+setManualAddContacts(): Promise<void>;
+```
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### setOtherParams()
+
+```ts
+setOtherParams(_manualAddContacts): Promise<void>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_manualAddContacts` | `boolean` |
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### setRadioParams()
+
+```ts
+setRadioParams(
+   _radioFreq, 
+   _radioBw, 
+   _radioSf, 
+_radioCr): Promise<void>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_radioFreq` | `number` |
+| `_radioBw` | `number` |
+| `_radioSf` | `number` |
+| `_radioCr` | `number` |
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### setTxPower()
+
+```ts
+setTxPower(_txPower): Promise<void>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_txPower` | `number` |
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### shareContact()
+
+```ts
+shareContact(_pubKey): Promise<void>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_pubKey` | `Uint8Array` |
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### sign()
+
+```ts
+sign(_data): Promise<Uint8Array<ArrayBufferLike>>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_data` | `Uint8Array` |
+
+###### Returns
+
+`Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
+
+##### syncDeviceTime()
+
+```ts
+syncDeviceTime(): Promise<void>;
+```
+
+###### Returns
+
+`Promise`\<`void`\>
+
+##### syncNextMessage()
+
+```ts
+syncNextMessage(): Promise<RawWaitingMessage | null>;
+```
+
+No queued messages yet — see [getWaitingMessages](#getwaitingmessages).
+
+###### Returns
+
+`Promise`\<`RawWaitingMessage` \| `null`\>
+
+##### tracePath()
+
+```ts
+tracePath(_path, _extraTimeoutMillis?): Promise<RawTraceData>;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `_path` | `Uint8Array` |
+| `_extraTimeoutMillis?` | `number` |
+
+###### Returns
+
+`Promise`\<`RawTraceData`\>
+
+***
+
 ### SimError
 
 Base class for every error thrown by the simulator.
@@ -697,6 +1567,33 @@ secret: string;
 ```
 
 Channel secret, lowercase hex.
+
+***
+
+### SimConnectionOptions
+
+Options for constructing a [SimConnection](#simconnection).
+
+M4 extends this with a `scenario` field; declaring it as an exported
+interface now lets that addition be source-compatible.
+
+#### Properties
+
+##### clock
+
+```ts
+clock: SimClock;
+```
+
+The virtual clock driving deterministic timestamps (and, in M4, events).
+
+##### world
+
+```ts
+world: MeshWorld;
+```
+
+The static world this connection answers reads from.
 
 ***
 
