@@ -18,10 +18,15 @@
 
 import { Constants } from "@liamcottle/meshcore.js";
 import type {
+  RawAdvert,
   RawChannel,
+  RawChannelData,
+  RawChannelMessage,
   RawContact,
+  RawContactMessage,
   RawCoreStatsData,
   RawDeviceInfo,
+  RawLogRxData,
   RawNeighboursResult,
   RawPacketStatsData,
   RawRadioStatsData,
@@ -30,7 +35,7 @@ import type {
   RawStats,
   RawTelemetryResponse,
 } from "@liamcottle/meshcore.js";
-import { fromHex } from "@dpup/meshcore-ts";
+import { fromHex, TxtType } from "@dpup/meshcore-ts";
 
 import { NodeRole, type MeshWorld, type SimChannel, type SimNode } from "./world.js";
 
@@ -254,10 +259,117 @@ export function neighboursOf(_node: SimNode): RawNeighboursResult {
  * `lppSensorData` is empty for now (no sensor simulation — telemetry is opaque
  * LPP bytes per the PRD); the verified prefix lets the client key the response.
  */
-export function telemetryOf(node: SimNode): RawTelemetryResponse {
+export function telemetryOf(node: SimNode, lppSensorData?: Uint8Array): RawTelemetryResponse {
   return {
     reserved: 0,
     pubKeyPrefix: pubKeyPrefixOf(node),
-    lppSensorData: new Uint8Array(0),
+    lppSensorData: lppSensorData ?? new Uint8Array(0),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic-event encoders (M4) — message-queue and push payloads
+// ---------------------------------------------------------------------------
+
+/**
+ * UTF-8 encode message text to the raw byte payload the unverified channel-data
+ * path carries. The device, lacking the key, would only ever see the encrypted
+ * bytes; the simulator does no real crypto, so it carries the plaintext bytes
+ * verbatim — what matters for testing is that the *shape* is raw bytes with no
+ * decoded `text` field, never a verified `channelMessage`.
+ */
+export function textToBytes(text: string): Uint8Array {
+  return new TextEncoder().encode(text);
+}
+
+/**
+ * Encode a direct contact message as a {@link RawContactMessage} (the
+ * verified-`contactMessage` queue shape).
+ *
+ * Keyed by the sender node's `pubKeyPrefix` (first 6 bytes of its key).
+ * `senderTimestamp` is the device-epoch seconds of the supplied clock reading,
+ * so arrival timestamps advance deterministically with the {@link
+ * import("./clock.js").SimClock}. `txtType` defaults to `TxtType.Plain`.
+ */
+export function contactMessageOf(
+  node: SimNode,
+  text: string,
+  nowMs: number,
+  txtType: TxtType = TxtType.Plain,
+): RawContactMessage {
+  return {
+    pubKeyPrefix: pubKeyPrefixOf(node),
+    pathLen: 0,
+    txtType,
+    senderTimestamp: epochSecsOf(nowMs),
+    text,
+  };
+}
+
+/**
+ * Encode a decrypt-verified channel message as a {@link RawChannelMessage} (the
+ * verified-`channelMessage` queue shape).
+ *
+ * Carries the channel slot index and the *decoded* `text` — the device held the
+ * key and decoded it. `txtType` defaults to `TxtType.Plain`.
+ */
+export function channelMessageOf(
+  channelIdx: number,
+  text: string,
+  nowMs: number,
+  txtType: TxtType = TxtType.Plain,
+): RawChannelMessage {
+  return {
+    channelIdx,
+    pathLen: 0,
+    txtType,
+    senderTimestamp: epochSecsOf(nowMs),
+    text,
+  };
+}
+
+/**
+ * Encode unverified channel traffic as a {@link RawChannelData} (the
+ * *unverified* queue shape — the admin-gate negative case).
+ *
+ * Carries the raw `bytes` and `snr` but **no decoded text** — the device could
+ * not decrypt-verify it, so it must never surface as a verified
+ * `channelMessage`. `dataType` is `DataTypes.Dev`; `pathLen` and the reserved
+ * fields are zero.
+ */
+export function channelDataOf(
+  channelIdx: number,
+  bytes: Uint8Array,
+  snr: number,
+): RawChannelData {
+  return {
+    snr,
+    reserved1: 0,
+    reserved2: 0,
+    channelIdx,
+    pathLen: 0,
+    dataType: Constants.DataTypes.Dev,
+    dataLen: bytes.length,
+    data: bytes,
+  };
+}
+
+/**
+ * Build an {@link RawAdvert} push payload for a node (the `Advert` push shape:
+ * just the advertiser's full public key).
+ */
+export function advertOf(node: SimNode): RawAdvert {
+  return { publicKey: fromHex(node.publicKey) };
+}
+
+/**
+ * Build a {@link RawLogRxData} push payload carrying receive signal metadata.
+ *
+ * Verified `contactMessage`/`channelMessage` queue shapes have no rssi/snr
+ * field (faithful to the wire), so when a verified message event specifies
+ * signal metadata the connection additionally emits this `LogRxData` push to
+ * carry it. `lastSnr`/`lastRssi` default to `0` when unspecified.
+ */
+export function logRxDataOf(raw: Uint8Array, snr?: number, rssi?: number): RawLogRxData {
+  return { lastSnr: snr ?? 0, lastRssi: rssi ?? 0, raw };
 }

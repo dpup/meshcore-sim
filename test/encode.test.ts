@@ -6,11 +6,16 @@ import { node } from "../src/builders.js";
 import {
   advTypeOf,
   batteryMilliVoltsOf,
+  channelDataOf,
+  channelMessageOf,
+  contactMessageOf,
   contactOf,
   DEVICE_EPOCH_BASE_SECS,
   epochSecsOf,
+  logRxDataOf,
   microDegrees,
   selfInfoOf,
+  textToBytes,
 } from "../src/encode.js";
 import { defineWorld } from "../src/builders.js";
 
@@ -63,6 +68,47 @@ describe("epochSecsOf", () => {
     expect(epochSecsOf(30_000)).toBe(DEVICE_EPOCH_BASE_SECS + 30);
     // Sub-second precision is floored.
     expect(epochSecsOf(1_500)).toBe(DEVICE_EPOCH_BASE_SECS + 1);
+  });
+});
+
+describe("dynamic-event encoders", () => {
+  it("contactMessageOf keys by the sender's 6-byte prefix with a Plain default", () => {
+    const n = node("rocky", { role: "repeater" });
+    const raw = contactMessageOf(n, "hello", 1_000);
+    expect(raw.text).toBe("hello");
+    expect(raw.txtType).toBe(Constants.TxtTypes.Plain);
+    expect(raw.pubKeyPrefix).toEqual(fromHex(n.publicKey).subarray(0, 6));
+    expect(raw.senderTimestamp).toBe(DEVICE_EPOCH_BASE_SECS + 1);
+  });
+
+  it("channelMessageOf (verified) carries the channelIdx and decoded text", () => {
+    const raw = channelMessageOf(1, "status: green", 2_000);
+    expect(raw.channelIdx).toBe(1);
+    expect(raw.text).toBe("status: green");
+    expect(raw.senderTimestamp).toBe(DEVICE_EPOCH_BASE_SECS + 2);
+  });
+
+  it("channelDataOf (unverified) carries raw bytes + snr and NO decoded text", () => {
+    const bytes = textToBytes("reboot now");
+    const raw = channelDataOf(7, bytes, 9);
+    expect(raw.channelIdx).toBe(7);
+    expect(raw.snr).toBe(9);
+    expect(raw.data).toEqual(bytes);
+    expect(raw.dataLen).toBe(bytes.length);
+    expect("text" in raw).toBe(false);
+  });
+
+  it("logRxDataOf carries signal metadata, defaulting to zero", () => {
+    expect(logRxDataOf(new Uint8Array(0))).toEqual({
+      lastSnr: 0,
+      lastRssi: 0,
+      raw: new Uint8Array(0),
+    });
+    expect(logRxDataOf(new Uint8Array([1]), 5, -90)).toEqual({
+      lastSnr: 5,
+      lastRssi: -90,
+      raw: new Uint8Array([1]),
+    });
   });
 });
 

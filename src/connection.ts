@@ -48,19 +48,36 @@ import { ErrorCode, fromHex } from "@dpup/meshcore-ts";
 
 import type { SimClock } from "./clock.js";
 import {
+  advertOf,
+  batteryMilliVoltsOf,
+  channelDataOf,
+  channelMessageOf,
   channelOf,
+  contactMessageOf,
   contactOf,
   coreStatsOf,
   deviceInfoOf,
   epochSecsOf,
+  logRxDataOf,
   neighboursOf,
   packetStatsOf,
+  pubKeyPrefixOf,
   radioStatsOf,
   repeaterStatsOf,
   selfInfoOf,
   telemetryOf,
-  batteryMilliVoltsOf,
+  textToBytes,
 } from "./encode.js";
+import type {
+  ChannelMessageEvent,
+  MessageEvent,
+  NodeStateEvent,
+  Scenario,
+  SimEvent,
+  TelemetryEvent,
+} from "./scenario.js";
+import { toMillis } from "./duration.js";
+import { SimError } from "./errors.js";
 import type { MeshWorld, SimNode } from "./world.js";
 
 /**
@@ -72,8 +89,15 @@ import type { MeshWorld, SimNode } from "./world.js";
 export interface SimConnectionOptions {
   /** The static world this connection answers reads from. */
   world: MeshWorld;
-  /** The virtual clock driving deterministic timestamps (and, in M4, events). */
+  /** The virtual clock driving deterministic timestamps (and M4 events). */
   clock: SimClock;
+  /**
+   * Optional dynamic-fixture timeline. When present, its events are scheduled
+   * onto the clock in {@link SimConnection.connect}, each at `clock.now() +
+   * toMillis(event.at)` (so `at` is relative to connect time), and fire as the
+   * clock advances. See {@link Scenario}.
+   */
+  scenario?: Scenario;
 }
 
 /** Resolve on the microtask queue, mirroring an async device response. */
@@ -106,11 +130,23 @@ export class SimConnection extends EventEmitter {
   protected readonly world: MeshWorld;
   /** The virtual clock supplying deterministic timestamps. */
   protected readonly clock: SimClock;
+  /** The dynamic timeline, if any, scheduled onto the clock in {@link connect}. */
+  protected readonly scenario?: Scenario;
+
+  /**
+   * The device's internal message queue. The spine of the delivery model: a
+   * scenario `message`/`channelMessage` event **enqueues** a `RawWaitingMessage`
+   * here and emits `MsgWaiting`; the client then drains via
+   * {@link getWaitingMessages} / {@link syncNextMessage}. The device never
+   * pushes message contents directly (AGENTS.md "don't-regress" #1).
+   */
+  private readonly deviceQueue: RawWaitingMessage[] = [];
 
   constructor(opts: SimConnectionOptions) {
     super();
     this.world = opts.world;
     this.clock = opts.clock;
+    this.scenario = opts.scenario;
   }
 
   /**
@@ -134,6 +170,26 @@ export class SimConnection extends EventEmitter {
    */
   async connect(): Promise<void> {
     queueMicrotask(() => this.emit("connected"));
+    this.scheduleScenario();
+  }
+
+  /**
+   * Schedule each scenario event onto the clock, at `clock.now() +
+   * toMillis(event.at)` (so `at` is relative to connect time — the device
+   * starts producing traffic once connected). Each timer fires **synchronously
+   * inside `clock.advance()`**, calling {@link fireEvent}, which enqueues +
+   * emits the right numeric push code. The client's drain then runs on the
+   * microtask queue after `advance()` returns.
+   */
+  private scheduleScenario(): void {
+    if (this.scenario === undefined) return;
+    const base = this.clock.now();
+    for (const { at, event } of this.scenario.events) {
+      const dueAt = base + toMillis(at);
+      // setTimeout delay is relative to clock.now(); since we schedule all at
+      // connect time, the delay is the absolute due offset from now.
+      this.clock.setTimeout(() => this.fireEvent(event), dueAt - this.clock.now());
+    }
   }
 
   /** Close the connection: emit `disconnected` and resolve. */
@@ -263,16 +319,24 @@ export class SimConnection extends EventEmitter {
     return resolved(neighboursOf(node));
   }
 
-  // --- message queue (empty until M4) ---
+  // --- message queue (filled by the scenario engine) ---
 
-  /** No queued messages yet — the device queue is filled by the M4 scenario engine. */
+  /**
+   * Return **all** queued messages and clear the queue (FIFO), mirroring the
+   * device draining its waiting-message queue. The client calls this from its
+   * `MsgWaiting` handler under `autoSync`.
+   *
+   * Because the array is spliced atomically, a burst of events that all
+   * enqueued before the drain's `await` resolves is returned together, in send
+   * order — the burst-coalescing behaviour the time-domain tests rely on.
+   */
   async getWaitingMessages(): Promise<RawWaitingMessage[]> {
-    return resolved([]);
+    return resolved(this.deviceQueue.splice(0, this.deviceQueue.length));
   }
 
-  /** No queued messages yet — see {@link getWaitingMessages}. */
+  /** Return and remove the oldest queued message, or `null` if the queue is empty. */
   async syncNextMessage(): Promise<RawWaitingMessage | null> {
-    return resolved(null);
+    return resolved(this.deviceQueue.shift() ?? null);
   }
 
   // --- out-of-scope stubs (M4/later) -------------------------------------
@@ -280,13 +344,25 @@ export class SimConnection extends EventEmitter {
   // calls a missing method. They have no real behavior yet; the dynamic
   // engine (sends, acks, replies, config mutation) is M4.
 
-  // M4/later: a send enqueues a RawWaitingMessage + emits MsgWaiting, then a
-  // scripted SendConfirmed ack. For now return a valid, benign RawSent.
+  /**
+   * Send a direct text message. Returns a benign `RawSent` (the device
+   * accepted it) and, on the next microtask, emits a `SendConfirmed` push so
+   * the client's `sendConfirmed` event fires — a minimal-but-real send
+   * acknowledgement.
+   *
+   * The ack is deferred via `queueMicrotask` (not the clock) so a test can
+   * `await client.sendTextMessage(...)` and observe `sendConfirmed` without
+   * advancing time. *Reactive* scripted replies are out of scope: a reply is
+   * just another scheduled `message` event on the timeline.
+   */
   async sendTextMessage(
     _contactPublicKey: Uint8Array,
     _text: string,
     _type?: number,
   ): Promise<RawSent> {
+    queueMicrotask(() =>
+      this.emitPush(Constants.PushCodes.SendConfirmed, { ackCode: 0, roundTrip: 0 }),
+    );
     return resolved({ result: Constants.ResponseCodes.Ok, expectedAckCrc: 0, estTimeout: 0 });
   }
 
@@ -509,6 +585,143 @@ export class SimConnection extends EventEmitter {
     const node = this.world.nodes.find((n) => hexStartsWith(n.publicKey, key));
     if (node === undefined || !node.reachable) return undefined;
     return node;
+  }
+
+  /**
+   * Emit a numeric push code on the EventEmitter. The raw `Connection` contract
+   * emits the integer `Constants.PushCodes` values that `MeshCoreClient` listens
+   * on; Node's `EventEmitter.emit` accepts a number at runtime but its TS type
+   * narrows to `string | symbol`, so this is the single, documented bridge.
+   */
+  private emitPush(code: number, payload?: unknown): void {
+    if (payload === undefined) {
+      this.emit(code as unknown as string);
+    } else {
+      this.emit(code as unknown as string, payload);
+    }
+  }
+
+  // --- scenario event dispatch (the provenance mapping table) -------------
+
+  /**
+   * Encode and dispatch one scenario event, per the provenance mapping table
+   * (AGENTS.md). Runs **synchronously inside `clock.advance()`** when its timer
+   * fires: it mutates the world, enqueues `RawWaitingMessage`s, and emits the
+   * matching numeric push code. Message enqueues happen before the
+   * `MsgWaiting` emit, so the client drains them on the following microtask.
+   */
+  private fireEvent(event: SimEvent): void {
+    switch (event.kind) {
+      case "message":
+        this.fireMessage(event);
+        break;
+      case "channelMessage":
+        this.fireChannelMessage(event);
+        break;
+      case "nodeState":
+        this.fireNodeState(event);
+        break;
+      case "telemetry":
+        this.fireTelemetry(event);
+        break;
+      case "advert":
+        this.emitPush(Constants.PushCodes.Advert, advertOf(this.nodeById(event.nodeId)));
+        break;
+    }
+  }
+
+  /**
+   * Direct contact message → enqueue `{ contactMessage }` keyed by the sender's
+   * `pubKeyPrefix`, then emit `MsgWaiting`. If the event carries rssi/snr (which
+   * the verified queue shape has no field for), additionally emit a `LogRxData`
+   * push so the signal metadata is observable.
+   */
+  private fireMessage(event: MessageEvent): void {
+    const node = this.nodeById(event.from);
+    this.deviceQueue.push({
+      contactMessage: contactMessageOf(node, event.text, this.clock.now(), event.txtType),
+    });
+    this.emitPush(Constants.PushCodes.MsgWaiting);
+    if (event.rssi !== undefined || event.snr !== undefined) {
+      this.emitPush(
+        Constants.PushCodes.LogRxData,
+        logRxDataOf(textToBytes(event.text), event.snr, event.rssi),
+      );
+    }
+  }
+
+  /**
+   * Channel traffic. Verified (the default) → enqueue `{ channelMessage }` with
+   * the decoded text on the channel's idx. Unverified → enqueue `{ channelData }`
+   * carrying the raw bytes + `snr` and **no decoded text**, so it can never
+   * surface as a verified `channelMessage` (the admin-gate negative case). Both
+   * then emit `MsgWaiting`.
+   */
+  private fireChannelMessage(event: ChannelMessageEvent): void {
+    const channelIdx = this.resolveChannelIdx(event.channel);
+    const verified = event.verified ?? true;
+    if (verified) {
+      this.deviceQueue.push({
+        channelMessage: channelMessageOf(channelIdx, event.text, this.clock.now()),
+      });
+      this.emitPush(Constants.PushCodes.MsgWaiting);
+      if (event.rssi !== undefined || event.snr !== undefined) {
+        this.emitPush(
+          Constants.PushCodes.LogRxData,
+          logRxDataOf(textToBytes(event.text), event.snr, event.rssi),
+        );
+      }
+    } else {
+      this.deviceQueue.push({
+        channelData: channelDataOf(channelIdx, textToBytes(event.text), event.snr ?? 0),
+      });
+      this.emitPush(Constants.PushCodes.MsgWaiting);
+    }
+  }
+
+  /**
+   * `nodeState` → mutate the referenced node's `reachable` flag in the world, so
+   * subsequent remote reads reflect the change. Optionally surfaces as a
+   * `PathUpdated` push so a listening app sees the topology change.
+   */
+  private fireNodeState(event: NodeStateEvent): void {
+    const node = this.nodeById(event.nodeId);
+    node.reachable = event.reachable;
+    this.emitPush(Constants.PushCodes.PathUpdated, { publicKey: fromHex(node.publicKey) });
+  }
+
+  /** `telemetry` → emit a `TelemetryResponse` push keyed by the node's prefix. */
+  private fireTelemetry(event: TelemetryEvent): void {
+    const node = this.nodeById(event.nodeId);
+    this.emitPush(Constants.PushCodes.TelemetryResponse, {
+      reserved: 0,
+      pubKeyPrefix: pubKeyPrefixOf(node),
+      lppSensorData: event.lppSensorData ?? new Uint8Array(0),
+    });
+  }
+
+  /** Resolve a node by id, or throw — a scenario referencing an unknown node is an authoring error. */
+  private nodeById(nodeId: string): SimNode {
+    const node = this.world.nodes.find((n) => n.id === nodeId);
+    if (node === undefined) {
+      throw new SimError(`scenario: event references unknown node id "${nodeId}"`);
+    }
+    return node;
+  }
+
+  /**
+   * Resolve a channel reference (slot index or name) to its index. A number is
+   * taken as the index directly (it need not be a configured slot — the
+   * admin-gate negative case may target an unconfigured admin index); a string
+   * is resolved by name against `world.channels` and throws if not found.
+   */
+  private resolveChannelIdx(channel: number | string): number {
+    if (typeof channel === "number") return channel;
+    const match = this.world.channels.find((c) => c.name === channel);
+    if (match === undefined) {
+      throw new SimError(`scenario: channel name "${channel}" not found in world`);
+    }
+    return match.idx;
   }
 }
 

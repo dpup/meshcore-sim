@@ -861,7 +861,13 @@ getTelemetry(contactPublicKey): Promise<RawTelemetryResponse>;
 getWaitingMessages(): Promise<RawWaitingMessage[]>;
 ```
 
-No queued messages yet — the device queue is filled by the M4 scenario engine.
+Return **all** queued messages and clear the queue (FIFO), mirroring the
+device draining its waiting-message queue. The client calls this from its
+`MsgWaiting` handler under `autoSync`.
+
+Because the array is spliced atomically, a burst of events that all
+enqueued before the drain's `await` resolves is returned together, in send
+order — the burst-coalescing behaviour the time-domain tests rely on.
 
 ###### Returns
 
@@ -1034,6 +1040,16 @@ sendTextMessage(
    _text, 
 _type?): Promise<RawSent>;
 ```
+
+Send a direct text message. Returns a benign `RawSent` (the device
+accepted it) and, on the next microtask, emits a `SendConfirmed` push so
+the client's `sendConfirmed` event fires — a minimal-but-real send
+acknowledgement.
+
+The ack is deferred via `queueMicrotask` (not the clock) so a test can
+`await client.sendTextMessage(...)` and observe `sendConfirmed` without
+advancing time. *Reactive* scripted replies are out of scope: a reply is
+just another scheduled `message` event on the timeline.
 
 ###### Parameters
 
@@ -1266,7 +1282,7 @@ syncDeviceTime(): Promise<void>;
 syncNextMessage(): Promise<RawWaitingMessage | null>;
 ```
 
-No queued messages yet — see [getWaitingMessages](#getwaitingmessages).
+Return and remove the oldest queued message, or `null` if the queue is empty.
 
 ###### Returns
 
@@ -1326,6 +1342,100 @@ Error.constructor
 ```
 
 ## Interfaces
+
+### AdvertEvent
+
+An advertisement from a node — emits an `Advert` push, surfacing as the
+client's `advert` event with the node's hex public key.
+
+#### Properties
+
+##### kind
+
+```ts
+kind: "advert";
+```
+
+##### nodeId
+
+```ts
+nodeId: string;
+```
+
+Id of the [SimNode](#simnode) advertising.
+
+***
+
+### ChannelMessageEvent
+
+Traffic on a channel — the channel-message path, verified or not.
+
+With `verified: true` (the default) it surfaces as the client's
+`channelMessage` event with the decoded `text` and the channel's
+`channelIdx` (the device held the key and decoded it). With `verified:
+false` it surfaces as a `channelData` event carrying the raw bytes and `snr`
+but **no decoded text**, and never as a verified `channelMessage` — the
+admin-gate negative case.
+
+#### Properties
+
+##### channel
+
+```ts
+channel: string | number;
+```
+
+Channel slot index, or a channel name resolved against the world.
+
+##### from?
+
+```ts
+optional from?: string;
+```
+
+Optional sender node id (informational; channel traffic is not keyed by
+sender on the wire).
+
+##### kind
+
+```ts
+kind: "channelMessage";
+```
+
+##### rssi?
+
+```ts
+optional rssi?: number;
+```
+
+Received signal strength, in dBm. Rides on the unverified/raw path.
+
+##### snr?
+
+```ts
+optional snr?: number;
+```
+
+Received signal-to-noise ratio, in dB — carried on `channelData.snr`.
+
+##### text
+
+```ts
+text: string;
+```
+
+The message text (decoded, for verified; encoded to bytes, for unverified).
+
+##### verified?
+
+```ts
+optional verified?: boolean;
+```
+
+Whether the device decrypt-verified this traffic. Defaults to `true`.
+`false` produces unverified `channelData` — the admin-gate negative case.
+
+***
 
 ### Clock
 
@@ -1474,6 +1584,100 @@ The home node plus reachable remote nodes.
 
 ***
 
+### MessageEvent
+
+A direct message from a contact node — the verified-`contactMessage` path.
+
+Surfaces (with `autoSync`) as the client's `contactMessage` event, keyed by
+the sender node's `pubKeyPrefix` (the first 6 bytes of its public key).
+
+#### Properties
+
+##### from
+
+```ts
+from: string;
+```
+
+Id of the [SimNode](#simnode) that sent the message.
+
+##### kind
+
+```ts
+kind: "message";
+```
+
+##### rssi?
+
+```ts
+optional rssi?: number;
+```
+
+Received signal strength, in dBm. Verified contact messages carry no
+rssi/snr on the wire, so when set this rides on an additional `LogRxData`
+push (see [SimConnection](#simconnection)).
+
+##### snr?
+
+```ts
+optional snr?: number;
+```
+
+Received signal-to-noise ratio, in dB. See [MessageEvent.rssi](#rssi-1).
+
+##### text
+
+```ts
+text: string;
+```
+
+The message text.
+
+##### txtType?
+
+```ts
+optional txtType?: TxtType;
+```
+
+Text payload type. Defaults to `TxtType.Plain`; pass `TxtType.SignedPlain`
+for a signed-plain message.
+
+***
+
+### NodeStateEvent
+
+A node's reachability changing mid-timeline — a failure mode (PRD §2).
+
+Mutates the referenced node's `reachable` flag in the world, so a subsequent
+remote read (`getStatus`/`getTelemetry`/`getNeighbours`) against it begins
+rejecting (offline) or resolving (back online).
+
+#### Properties
+
+##### kind
+
+```ts
+kind: "nodeState";
+```
+
+##### nodeId
+
+```ts
+nodeId: string;
+```
+
+Id of the [SimNode](#simnode) whose state changes.
+
+##### reachable
+
+```ts
+reachable: boolean;
+```
+
+The node's new reachability.
+
+***
+
 ### RadioConfig
 
 A node's LoRa radio configuration.
@@ -1523,6 +1727,53 @@ optional txPower?: number;
 ```
 
 Transmit power, in dBm.
+
+***
+
+### Scenario
+
+A dynamic fixture — a validated, time-sorted list of [ScheduledEvent](#scheduledevent)s.
+
+Build one with [scenario](#scenario-2); never assemble by hand, so every scenario is
+the same validated, sorted object.
+
+#### Properties
+
+##### events
+
+```ts
+readonly events: readonly ScheduledEvent[];
+```
+
+The events, sorted ascending by `at` (stable for equal offsets).
+
+***
+
+### ScheduledEvent
+
+A [SimEvent](#simevent) bound to a time offset.
+
+`at` is **relative to connect time** — the moment `client.connect()` resolves
+— so a scenario reads as "at +2s a message arrives", independent of the
+clock's absolute start.
+
+#### Properties
+
+##### at
+
+```ts
+at: Duration;
+```
+
+When the event fires, relative to connect time.
+
+##### event
+
+```ts
+event: SimEvent;
+```
+
+The event to fire.
 
 ***
 
@@ -1585,7 +1836,18 @@ interface now lets that addition be source-compatible.
 clock: SimClock;
 ```
 
-The virtual clock driving deterministic timestamps (and, in M4, events).
+The virtual clock driving deterministic timestamps (and M4 events).
+
+##### scenario?
+
+```ts
+optional scenario?: Scenario;
+```
+
+Optional dynamic-fixture timeline. When present, its events are scheduled
+onto the clock in [SimConnection.connect](#connect), each at `clock.now() +
+toMillis(event.at)` (so `at` is relative to connect time), and fire as the
+clock advances. See [Scenario](#scenario).
 
 ##### world
 
@@ -1739,6 +2001,37 @@ Advertised role.
 
 ***
 
+### TelemetryEvent
+
+A telemetry report from a node — emits a `TelemetryResponse` push, surfacing
+as the client's `telemetryResponse` event keyed by the node's prefix.
+
+#### Properties
+
+##### kind
+
+```ts
+kind: "telemetry";
+```
+
+##### lppSensorData?
+
+```ts
+optional lppSensorData?: Uint8Array<ArrayBufferLike>;
+```
+
+Opaque LPP sensor bytes (no sensor simulation — telemetry is opaque).
+
+##### nodeId
+
+```ts
+nodeId: string;
+```
+
+Id of the [SimNode](#simnode) reporting telemetry.
+
+***
+
 ### WorldSpec
 
 Spec accepted by [defineWorld](#defineworld).
@@ -1819,6 +2112,24 @@ The role a node advertises on the mesh.
 
 The encode layer maps these to meshcore's `AdvType`:
 `companion → Chat`, `repeater → Repeater`, `roomserver → Room`.
+
+***
+
+### SimEvent
+
+```ts
+type SimEvent = 
+  | MessageEvent
+  | ChannelMessageEvent
+  | NodeStateEvent
+  | TelemetryEvent
+  | AdvertEvent;
+```
+
+One thing the simulated world does at a point on the timeline.
+
+A discriminated union on `kind`; see the per-member docs and the module
+overview for how each maps onto the raw protocol (the provenance table).
 
 ***
 
@@ -1915,6 +2226,36 @@ const VERSION: "0.1.0" = "0.1.0";
 The package version (kept in sync with package.json at release time).
 
 ## Functions
+
+### at()
+
+```ts
+function at(d, event): ScheduledEvent;
+```
+
+Ergonomic helper: pair a time offset with an event.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `d` | [`Duration`](#duration) |
+| `event` | [`SimEvent`](#simevent) |
+
+#### Returns
+
+[`ScheduledEvent`](#scheduledevent)
+
+#### Example
+
+```ts
+scenario([
+  at("1s", { kind: "message", from: "rocky", text: "hi" }),
+  at("2s", { kind: "advert", nodeId: "rocky" }),
+]);
+```
+
+***
 
 ### channel()
 
@@ -2047,6 +2388,36 @@ consistency.
 #### Returns
 
 [`SimNode`](#simnode)
+
+***
+
+### scenario()
+
+```ts
+function scenario(events): Scenario;
+```
+
+Assemble and validate a [Scenario](#scenario) — the single constructor every
+scenario passes through.
+
+Validates each `at` is a well-formed [Duration](#duration) (via [toMillis](#tomillis))
+and sorts the events ascending by offset. The sort is **stable**: events with
+the same offset keep their authoring order, so a burst authored in send order
+fires in send order.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `events` | [`ScheduledEvent`](#scheduledevent)[] |
+
+#### Returns
+
+[`Scenario`](#scenario)
+
+#### Throws
+
+If any event has an invalid `at` duration.
 
 ***
 

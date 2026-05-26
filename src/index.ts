@@ -44,6 +44,19 @@ export type { Clock, TimerHandle } from "./clock.js";
 export { SimConnection } from "./connection.js";
 export type { SimConnectionOptions } from "./connection.js";
 
+// Dynamic-fixture timeline — the scenario engine (M4).
+export { at, scenario } from "./scenario.js";
+export type {
+  AdvertEvent,
+  ChannelMessageEvent,
+  MessageEvent,
+  NodeStateEvent,
+  Scenario,
+  ScheduledEvent,
+  SimEvent,
+  TelemetryEvent,
+} from "./scenario.js";
+
 // Errors.
 export { SimError } from "./errors.js";
 
