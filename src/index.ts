@@ -36,6 +36,10 @@ export { toMillis } from "./duration.js";
 export type { Duration } from "./duration.js";
 export { deriveNodeKey } from "./keys.js";
 
+// Virtual clock — the test-time injectable for time-domain testing (§5).
+export { SimClock } from "./clock.js";
+export type { Clock, TimerHandle } from "./clock.js";
+
 // Errors.
 export { SimError } from "./errors.js";
 

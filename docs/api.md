@@ -13,7 +13,7 @@ It models the *observable behavior* of a mesh — message arrival, ordering,
 loss, signal metadata, node state, channel and decrypt outcomes — not RF
 physics. SimConnection is a drop-in for a meshcore.js `Connection`:
 inject it where an app would use a real TCP/serial connection, drive a
-SimClock, and assert on what the app observed.
+[SimClock](#simclock), and assert on what the app observed.
 
 ## Example
 
@@ -155,6 +155,272 @@ If `items` is empty.
 
 ***
 
+### SimClock
+
+Deterministic virtual clock for test scenarios.
+
+Create one, pass it into the system under test wherever the app accepts a
+[Clock](#clock), then call [advance](#advance) / [runUntil](#rununtil) to drive
+simulated time forward. All callbacks fire synchronously in due-time order
+(FIFO within the same tick) before the control method returns.
+
+#### Example
+
+```ts
+const clock = new SimClock();
+let fired = false;
+clock.setTimeout(() => { fired = true; }, "5s");
+clock.advance("4999ms");
+// fired === false
+clock.advance("1ms");
+// fired === true
+```
+
+#### Implements
+
+- [`Clock`](#clock)
+
+#### Constructors
+
+##### Constructor
+
+```ts
+new SimClock(opts?): SimClock;
+```
+
+###### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `opts?` | \{ `start?`: `number`; \} | - |
+| `opts.start?` | `number` | Initial virtual time in ms (defaults to `0`). |
+
+###### Returns
+
+[`SimClock`](#simclock)
+
+#### Methods
+
+##### advance()
+
+```ts
+advance(by): void;
+```
+
+Advance virtual time by `by`, firing every timer whose due time falls
+within `(previousNow, now + by]`, in due-time order (FIFO within the same
+tick).
+
+Timers scheduled *during* a callback that fall within the remaining window
+also fire in the same `advance` — this lets a chain of timers collapse into
+one call. After all due timers have fired, `now()` is set to exactly
+`previousNow + toMillis(by)`.
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `by` | [`Duration`](#duration) |
+
+###### Returns
+
+`void`
+
+###### Throws
+
+If `by` is not a valid [Duration](#duration).
+
+##### clearInterval()
+
+```ts
+clearInterval(handle): void;
+```
+
+Cancel a repeating timer.
+
+Cancelling an unknown or already-cancelled handle is a no-op.
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `handle` | [`TimerHandle`](#timerhandle) |
+
+###### Returns
+
+`void`
+
+###### Implementation of
+
+[`Clock`](#clock).[`clearInterval`](#clearinterval-1)
+
+##### clearTimeout()
+
+```ts
+clearTimeout(handle): void;
+```
+
+Cancel a pending one-shot timer.
+
+Cancelling an unknown or already-fired handle is a no-op.
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `handle` | [`TimerHandle`](#timerhandle) |
+
+###### Returns
+
+`void`
+
+###### Implementation of
+
+[`Clock`](#clock).[`clearTimeout`](#cleartimeout-1)
+
+##### now()
+
+```ts
+now(): number;
+```
+
+Current virtual time in milliseconds.
+
+###### Returns
+
+`number`
+
+###### Implementation of
+
+[`Clock`](#clock).[`now`](#now-1)
+
+##### pendingCount()
+
+```ts
+pendingCount(): number;
+```
+
+Number of scheduled timers that have not yet fired or been cancelled.
+Useful for assertions and diagnostics.
+
+###### Returns
+
+`number`
+
+##### runAll()
+
+```ts
+runAll(maxIterations?): void;
+```
+
+Fire all currently-pending one-shot timers until none remain, advancing
+`now()` to the due time of the last timer fired. Interval timers are
+left in place (they never drain to zero).
+
+This is a convenience for scenario draining in M4 and later milestones.
+
+###### Parameters
+
+| Parameter | Type | Default value | Description |
+| ------ | ------ | ------ | ------ |
+| `maxIterations` | `number` | `100_000` | Guard against runaway loops (default 100 000). |
+
+###### Returns
+
+`void`
+
+###### Throws
+
+If `maxIterations` is exceeded (likely caused by an
+  interval or by one-shot timers scheduling each other without bound).
+
+##### runUntil()
+
+```ts
+runUntil(t): void;
+```
+
+Fire all timers with `dueAt <= t`, in order, then set `now()` to exactly
+`t`.
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `t` | `number` |
+
+###### Returns
+
+`void`
+
+###### Throws
+
+If `t < now()`.
+
+##### setInterval()
+
+```ts
+setInterval(callback, interval): TimerHandle;
+```
+
+Schedule a repeating callback that fires every `interval`.
+
+The interval period must be strictly positive — a zero or negative period
+would cause an infinite loop inside a single [advance](#advance) call.
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `callback` | () => `void` |
+| `interval` | [`Duration`](#duration) |
+
+###### Returns
+
+[`TimerHandle`](#timerhandle)
+
+###### Throws
+
+If `interval` is not a valid [Duration](#duration) or its
+  parsed value is `<= 0`.
+
+###### Implementation of
+
+[`Clock`](#clock).[`setInterval`](#setinterval-1)
+
+##### setTimeout()
+
+```ts
+setTimeout(callback, delay): TimerHandle;
+```
+
+Schedule a one-shot callback at `now() + delay`.
+
+A zero or negative delay (after parsing) is allowed — the callback will
+fire at the current virtual time on the next [advance](#advance) or
+[runUntil](#rununtil) call.
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `callback` | () => `void` |
+| `delay` | [`Duration`](#duration) |
+
+###### Returns
+
+[`TimerHandle`](#timerhandle)
+
+###### Throws
+
+If `delay` is not a valid [Duration](#duration).
+
+###### Implementation of
+
+[`Clock`](#clock).[`setTimeout`](#settimeout-1)
+
+***
+
 ### SimError
 
 Base class for every error thrown by the simulator.
@@ -190,6 +456,109 @@ Error.constructor
 ```
 
 ## Interfaces
+
+### Clock
+
+The minimal clock interface that apps inject.
+
+In production the app supplies a real implementation backed by
+`Date.now()` and `globalThis.setTimeout`; in tests it is [SimClock](#simclock).
+Because the interface is this small any app can define it locally and
+`SimClock` will satisfy it structurally.
+
+#### Methods
+
+##### clearInterval()
+
+```ts
+clearInterval(handle): void;
+```
+
+Cancel a repeating timer. No-op for unknown / already-cancelled handles.
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `handle` | [`TimerHandle`](#timerhandle) |
+
+###### Returns
+
+`void`
+
+##### clearTimeout()
+
+```ts
+clearTimeout(handle): void;
+```
+
+Cancel a pending one-shot timer. No-op for unknown / already-fired handles.
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `handle` | [`TimerHandle`](#timerhandle) |
+
+###### Returns
+
+`void`
+
+##### now()
+
+```ts
+now(): number;
+```
+
+Virtual (or wall-clock) milliseconds since the clock's epoch.
+
+###### Returns
+
+`number`
+
+##### setInterval()
+
+```ts
+setInterval(callback, interval): TimerHandle;
+```
+
+Schedule `callback` to run repeatedly every `interval`.
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `callback` | () => `void` |
+| `interval` | [`Duration`](#duration) |
+
+###### Returns
+
+[`TimerHandle`](#timerhandle)
+
+A handle that can be passed to [clearInterval](#clearinterval-1).
+
+##### setTimeout()
+
+```ts
+setTimeout(callback, delay): TimerHandle;
+```
+
+Schedule `callback` to run after `delay` has elapsed.
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `callback` | () => `void` |
+| `delay` | [`Duration`](#duration) |
+
+###### Returns
+
+[`TimerHandle`](#timerhandle)
+
+A handle that can be passed to [clearTimeout](#cleartimeout-1).
+
+***
 
 ### MeshWorld
 
@@ -553,6 +922,28 @@ The role a node advertises on the mesh.
 
 The encode layer maps these to meshcore's `AdvType`:
 `companion → Chat`, `repeater → Repeater`, `roomserver → Room`.
+
+***
+
+### TimerHandle
+
+```ts
+type TimerHandle = object;
+```
+
+An opaque handle returned by [Clock.setTimeout](#settimeout-1) /
+[Clock.setInterval](#setinterval-1). Pass to [Clock.clearTimeout](#cleartimeout-1) /
+[Clock.clearInterval](#clearinterval-1) to cancel the timer.
+
+The shape is intentionally opaque — callers must not inspect its fields.
+
+#### Properties
+
+##### \_\_timerId
+
+```ts
+readonly __timerId: number;
+```
 
 ## Variables
 
