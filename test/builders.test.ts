@@ -45,7 +45,8 @@ describe("channel", () => {
     expect(c.name).toBe("general");
     expect(c.kind).toBe("public");
     expect(c.secret).toBe(channel(0, "general").secret);
-    expect(c.secret).toMatch(/^[0-9a-f]{64}$/);
+    // MeshCore channel keys are 128-bit (16 bytes = 32 hex chars).
+    expect(c.secret).toMatch(/^[0-9a-f]{32}$/);
   });
 
   it("can be overridden to private", () => {

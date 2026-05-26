@@ -2063,7 +2063,7 @@ Channel display name.
 secret: string;
 ```
 
-Channel secret, lowercase hex.
+Channel secret (128-bit / 16-byte MeshCore channel key), lowercase hex.
 
 ***
 

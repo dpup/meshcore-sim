@@ -112,7 +112,7 @@ export interface SimChannel {
   name: string;
   /** Whether the channel is public or private. */
   kind: ChannelKind;
-  /** Channel secret, lowercase hex. */
+  /** Channel secret (128-bit / 16-byte MeshCore channel key), lowercase hex. */
   secret: string;
 }
 

@@ -33,6 +33,13 @@ const DEFAULT_RADIO = {
 /** Default battery level, as a percentage. */
 const DEFAULT_BATTERY = 100;
 
+/**
+ * Width of a channel secret, in hex characters. MeshCore channel keys are
+ * 128-bit (16 bytes), so the default secret is the first 16 bytes of the
+ * derivation — matching the real wire width a device would report.
+ */
+const CHANNEL_SECRET_HEX_LEN = 32;
+
 /** Default firmware version reported by a node. */
 const DEFAULT_FIRMWARE_VER = 1;
 
@@ -83,9 +90,10 @@ export function channel(
     idx,
     name,
     kind: ChannelKind.Public,
-    // Reuse the deterministic key derivation for a stable per-name secret; the
-    // simulator does no real crypto, it only needs a stable identifier.
-    secret: deriveNodeKey(`channel:${name}`),
+    // Reuse the deterministic key derivation for a stable per-name secret,
+    // truncated to MeshCore's 128-bit (16-byte) channel-key width. The simulator
+    // does no real crypto — it only needs a stable, correctly-sized identifier.
+    secret: deriveNodeKey(`channel:${name}`).slice(0, CHANNEL_SECRET_HEX_LEN),
     ...overrides,
   };
 }
