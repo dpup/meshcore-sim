@@ -30,6 +30,94 @@ await client.connect();
 
 ## Classes
 
+### RealtimeClock
+
+Drives a [SimClock](#simclock) from wall time for interactive use. Construct it
+around the same `SimClock` the app was given, then [start](#start) it.
+
+#### Example
+
+```ts
+const clock = new SimClock();
+const sim = new SimConnection({ world, clock, responders });
+// … wire up an interactive server …
+
+const realtime = new RealtimeClock(clock).start();
+// time now flows on its own; scheduled events fire as real seconds pass.
+// on shutdown:
+realtime.stop();
+```
+
+#### Constructors
+
+##### Constructor
+
+```ts
+new RealtimeClock(clock, opts?): RealtimeClock;
+```
+
+###### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `clock` | [`SimClock`](#simclock) | The `SimClock` to drive (the one the app under test was injected with). |
+| `opts?` | [`RealtimeClockOptions`](#realtimeclockoptions) | - |
+
+###### Returns
+
+[`RealtimeClock`](#realtimeclock)
+
+###### Throws
+
+If `step` is not a strictly-positive [Duration](#duration-1), or
+  `scale` is not positive.
+
+#### Accessors
+
+##### running
+
+###### Get Signature
+
+```ts
+get running(): boolean;
+```
+
+Whether the pump is currently running.
+
+###### Returns
+
+`boolean`
+
+#### Methods
+
+##### start()
+
+```ts
+start(): this;
+```
+
+Start pumping the clock. Idempotent — a no-op if already running. The
+underlying interval is `unref`'d so it never keeps a Node process alive on
+its own.
+
+###### Returns
+
+`this`
+
+##### stop()
+
+```ts
+stop(): this;
+```
+
+Stop pumping the clock. Idempotent — a no-op if not running.
+
+###### Returns
+
+`this`
+
+***
+
 ### SeededRandom
 
 A small, deterministic 32-bit PRNG seeded from a single integer.
@@ -2294,6 +2382,35 @@ optional txPower?: number;
 ```
 
 Transmit power, in dBm.
+
+***
+
+### RealtimeClockOptions
+
+Options for a [RealtimeClock](#realtimeclock).
+
+#### Properties
+
+##### scale?
+
+```ts
+optional scale?: number;
+```
+
+Virtual-to-real time ratio (default `1` — true real time). `scale: 10` runs
+the simulation ten times faster than wall time, so a 30-second debounce
+fires in three real seconds — handy for live demos.
+
+##### step?
+
+```ts
+optional step?: Duration;
+```
+
+How often to pump the clock, in wall-clock time (default `"250ms"`). Each
+tick advances the `SimClock` by the wall time actually elapsed since the
+previous tick (so a delayed event loop catches up rather than drifting),
+multiplied by [RealtimeClockOptions.scale](#scale).
 
 ***
 
