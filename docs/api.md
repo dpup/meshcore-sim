@@ -199,6 +199,31 @@ new SimClock(opts?): SimClock;
 
 [`SimClock`](#simclock)
 
+#### Properties
+
+##### DEFAULT\_FLUSHES
+
+```ts
+readonly static DEFAULT_FLUSHES: 64 = 64;
+```
+
+Default number of microtask turns [settle](#settle) yields, and [advanceAsync](#advanceasync) yields after each step. The client's `MsgWaiting →
+getWaitingMessages() → emit` drain runs re-entrantly across many microtask
+turns; a single `await Promise.resolve()` flushes only the first. 64 turns
+comfortably settles the multi-message bursts the time-domain tests produce
+while staying bounded and cheap.
+
+##### DEFAULT\_STEP\_MS
+
+```ts
+readonly static DEFAULT_STEP_MS: 250 = 250;
+```
+
+Default step (ms) [advanceAsync](#advanceasync) advances per iteration. Fine enough
+that per-event timestamps within a window are preserved (each event is
+stamped at the step it fires in, not at the window's end), coarse enough to
+keep the step count — and therefore the microtask-flush cost — modest.
+
 #### Methods
 
 ##### advance()
@@ -231,6 +256,47 @@ call. After all due timers have fired, `now()` is set to exactly
 ###### Throws
 
 If `by` is not a valid [Duration](#duration-1).
+
+##### advanceAsync()
+
+```ts
+advanceAsync(by, opts?): Promise<void>;
+```
+
+Advance virtual time by `by` in fine steps, [settle](#settle)-ing the async
+consumer drain between each step. The settling counterpart to [advance](#advance): use it whenever advancing the clock causes a consumer to deliver
+messages asynchronously (e.g. `MeshCoreClient` under `autoSync`).
+
+This fixes the two failure modes of `advance()` + a single `await
+Promise.resolve()`:
+
+1. **Under-delivery.** One flush settles only the first of a burst's many
+   microtask turns; this flushes `flushes` turns after every step.
+2. **Timestamp collapse.** One big `advance()` runs the drain *after* it
+   returns, when `now()` already equals the target, so every event in the
+   window is stamped at the window's end. Stepping fires each event at its
+   own step and settles it there, preserving per-event timing.
+
+The synchronous [advance](#advance) remains correct (and faster) for tests that
+only assert on timers and don't drive an async consumer; reach for
+`advanceAsync` when message delivery is involved.
+
+###### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `by` | [`Duration`](#duration-1) | How far to advance (a [Duration](#duration-1)). |
+| `opts?` | \{ `flushes?`: `number`; `step?`: [`Duration`](#duration-1); \} | - |
+| `opts.flushes?` | `number` | Microtask turns to settle after each step (default [DEFAULT\_FLUSHES](#default_flushes)). |
+| `opts.step?` | [`Duration`](#duration-1) | Step size per iteration (default [DEFAULT\_STEP\_MS](#default_step_ms) ms). Must be strictly positive. |
+
+###### Returns
+
+`Promise`\<`void`\>
+
+###### Throws
+
+If `by` is not a valid [Duration](#duration-1), or `step <= 0`.
 
 ##### clearInterval()
 
@@ -420,6 +486,35 @@ If `delay` is not a valid [Duration](#duration-1).
 ###### Implementation of
 
 [`Clock`](#clock).[`setTimeout`](#settimeout-1)
+
+##### settle()
+
+```ts
+settle(flushes?): Promise<void>;
+```
+
+Yield the JS microtask queue `flushes` times, letting an async consumer's
+re-entrant work settle without advancing virtual time.
+
+`SimClock` fires timers **synchronously** inside [advance](#advance), but a
+consumer like `MeshCoreClient` (under `autoSync`) drains the resulting
+`MsgWaiting` queue **asynchronously**, across many microtask turns. The old
+guidance — a single `await Promise.resolve()` — flushes only the first turn,
+silently under-delivering a multi-message burst. This drains the chain.
+
+Use it after a manual [advance](#advance), or after an `await
+client.sendTextMessage(...)` whose ack/reply lands on the microtask queue.
+It consults no real time, so it stays deterministic.
+
+###### Parameters
+
+| Parameter | Type | Default value |
+| ------ | ------ | ------ |
+| `flushes` | `number` | `SimClock.DEFAULT_FLUSHES` |
+
+###### Returns
+
+`Promise`\<`void`\>
 
 ***
 

@@ -143,6 +143,21 @@ exact target time.
 **`runAll()`** fires all pending one-shot timers and advances to the last one's
 due time. Convenient for draining a scenario completely.
 
+**`await advanceAsync(by)`** is the settling counterpart to `advance`. `advance`
+fires timers *synchronously*, but a client draining messages under `autoSync`
+delivers them *asynchronously*, across many microtask turns — so a synchronous
+`advance` alone leaves delivery unfinished. `advanceAsync` steps the clock
+forward in fine increments (default 250 ms) and flushes the microtask queue
+between steps, so a multi-message burst is fully delivered **and** each message
+keeps the timestamp of the step it fired in. Reach for it whenever advancing
+time causes message delivery; keep the synchronous `advance` for pure-timer
+tests. See [Device-queue delivery](#device-queue-delivery-and-await).
+
+**`await settle()`** flushes the microtask queue without advancing time — use it
+after a manual `advance`, or after `await client.sendTextMessage(...)` whose ack
+or reply lands on the microtask queue. Both helpers consult no real time, so
+they stay deterministic.
+
 **Why it matters.** Without a controllable clock, a test for a 30-second
 coalescer debounce is a 30-second test. With `SimClock`, it is a zero-second
 test. The same applies to any time-domain logic: burst windows, retry backoffs,
@@ -238,9 +253,12 @@ client.on("channelData", (d) => {
 
 Messages follow the MeshCore device-queue model: a scenario `message` event
 enqueues a `RawWaitingMessage` and emits `PushCodes.MsgWaiting`. With `autoSync:
-true` the client drains the queue and emits the named events. Because draining is
-async, `advance` the clock first to enqueue the events, then `await` the promise
-that collects them:
+true` the client drains the queue and emits the named events. Draining is
+**async and re-entrant** — it spans many microtask turns — so the clock and the
+delivery need to be settled together. Two patterns:
+
+**When you know how many messages to expect**, collect them in a promise and
+`advance` the clock — the promise resolves once the drain has emitted them all:
 
 ```ts
 // Set up the collector *before* advancing (avoid the race).
@@ -255,6 +273,23 @@ const received = new Promise<string[]>((resolve) => {
 clock.advance("10s"); // fires the scenario events → MsgWaiting → auto-drain
 const texts = await received; // ["msg 0", "msg 1", "msg 2"]
 ```
+
+**When you don't want to pre-count** (or care about per-event timing), use
+`advanceAsync`, which steps the clock and settles the drain between steps:
+
+```ts
+const texts: string[] = [];
+client.on("contactMessage", (m) => texts.push(m.text));
+
+await clock.advanceAsync("10s"); // advance + settle the async drain
+// texts holds every message delivered in the window, each stamped at the
+// step it fired in (not collapsed to the window's end).
+```
+
+> **Footgun:** a single `await Promise.resolve()` after `advance` flushes only
+> the *first* microtask turn, so a multi-message burst silently under-delivers.
+> Use `advanceAsync` (or `await clock.settle()` after a manual `advance`)
+> instead.
 
 ---
 
@@ -411,11 +446,12 @@ describe("my coalescer", () => {
     client.on("contactMessage", (m) => summaries.push(m.text));
 
     // Advance 5 seconds of virtual time — all 3 burst messages arrive.
-    clock.advance("5s");
-    await Promise.resolve(); // flush the async drain
+    // advanceAsync settles the async drain, so all 3 land (a single
+    // `await Promise.resolve()` would deliver only the first).
+    await clock.advanceAsync("5s");
 
     // Advance through the 30-second debounce window — zero real seconds.
-    clock.advance("30s");
+    await clock.advanceAsync("30s");
 
     // Assert coalescer output (this is your app's logic, not the sim's).
     expect(summaries.length).toBe(3);
@@ -455,7 +491,7 @@ expect(raw.channelIdx).toBe(ADMIN_CH);
 expect(raw.snr).toBe(7);
 expect(raw.data).toBeInstanceOf(Uint8Array);
 
-await Promise.resolve(); // flush microtasks
+await clock.settle(); // flush the async drain fully
 expect(sawChannelMessage).toBe(false); // never decoded as verified
 ```
 
