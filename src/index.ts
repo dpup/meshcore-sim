@@ -44,6 +44,15 @@ export type { Clock, TimerHandle } from "./clock.js";
 export { SimConnection } from "./connection.js";
 export type { SimConnectionOptions } from "./connection.js";
 
+// Reactive replies — let the world respond to outbound sends (#2).
+export type {
+  ChannelReply,
+  ContactReply,
+  OutboundMessage,
+  Responder,
+  ResponderReply,
+} from "./responder.js";
+
 // Dynamic-fixture timeline — the scenario engine (M4).
 export { at, scenario } from "./scenario.js";
 export type {

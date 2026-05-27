@@ -76,6 +76,8 @@ import type {
   SimEvent,
   TelemetryEvent,
 } from "./scenario.js";
+import { isChannelReply } from "./responder.js";
+import type { OutboundMessage, Responder, ResponderReply } from "./responder.js";
 import { toMillis } from "./duration.js";
 import { SimError } from "./errors.js";
 import type { MeshWorld, SimNode } from "./world.js";
@@ -98,6 +100,14 @@ export interface SimConnectionOptions {
    * clock advances. See {@link Scenario}.
    */
   scenario?: Scenario;
+  /**
+   * Optional reactive-reply rules. Each outbound send (`sendTextMessage` /
+   * `sendChannelTextMessage`) is matched against these; a matching responder's
+   * reply is scheduled on the clock and delivered through the device-queue
+   * model, so request/response round-trips (remote-admin, echo/command bots)
+   * work without pre-scripting the reply on the timeline. See {@link Responder}.
+   */
+  responders?: Responder[];
 }
 
 /** Resolve on the microtask queue, mirroring an async device response. */
@@ -132,6 +142,8 @@ export class SimConnection extends EventEmitter {
   protected readonly clock: SimClock;
   /** The dynamic timeline, if any, scheduled onto the clock in {@link connect}. */
   protected readonly scenario?: Scenario;
+  /** Reactive-reply rules, if any, matched against each outbound send. */
+  protected readonly responders: readonly Responder[];
 
   /**
    * The device's internal message queue. The spine of the delivery model: a
@@ -153,6 +165,7 @@ export class SimConnection extends EventEmitter {
     this.world = structuredClone(opts.world);
     this.clock = opts.clock;
     this.scenario = opts.scenario;
+    this.responders = opts.responders ?? [];
   }
 
   /**
@@ -358,22 +371,34 @@ export class SimConnection extends EventEmitter {
    *
    * The ack is deferred via `queueMicrotask` (not the clock) so a test can
    * `await client.sendTextMessage(...)` and observe `sendConfirmed` without
-   * advancing time. *Reactive* scripted replies are out of scope: a reply is
-   * just another scheduled `message` event on the timeline.
+   * advancing time. Any configured {@link Responder} is then matched against the
+   * send and its reply scheduled on the clock — the world reacts to the app's
+   * action (PRD §2).
    */
   async sendTextMessage(
-    _contactPublicKey: Uint8Array,
-    _text: string,
-    _type?: number,
+    contactPublicKey: Uint8Array,
+    text: string,
+    type?: number,
   ): Promise<RawSent> {
     queueMicrotask(() =>
       this.emitPush(Constants.PushCodes.SendConfirmed, { ackCode: 0, roundTrip: 0 }),
     );
+    this.dispatchResponders({
+      kind: "contact",
+      text,
+      to: this.nodeIdByKey(contactPublicKey),
+      txtType: type,
+    });
     return resolved({ result: Constants.ResponseCodes.Ok, expectedAckCrc: 0, estTimeout: 0 });
   }
 
-  // M4/later: enqueue a channel message / channelData per the provenance table.
-  async sendChannelTextMessage(_channelIdx: number, _text: string): Promise<void> {
+  /**
+   * Send a channel text message. Matches configured {@link Responder}s against
+   * the send (a channel command/echo bot keys on `msg.channel` via `when`) and
+   * schedules any reply on the clock.
+   */
+  async sendChannelTextMessage(channelIdx: number, text: string): Promise<void> {
+    this.dispatchResponders({ kind: "channel", text, channel: channelIdx });
     return resolved(undefined);
   }
 
@@ -591,6 +616,74 @@ export class SimConnection extends EventEmitter {
     const node = this.world.nodes.find((n) => hexStartsWith(n.publicKey, key));
     if (node === undefined || !node.reachable) return undefined;
     return node;
+  }
+
+  /**
+   * Resolve a node id from a key passed to an outbound send (full key or prefix
+   * match), regardless of reachability. Used to populate
+   * {@link OutboundMessage.to} so a responder can match on destination. Returns
+   * `undefined` if the key matches no known node.
+   */
+  private nodeIdByKey(key: Uint8Array): string | undefined {
+    return this.world.nodes.find((n) => hexStartsWith(n.publicKey, key))?.id;
+  }
+
+  // --- reactive replies (responders) --------------------------------------
+
+  /**
+   * Match an outbound send against the configured {@link Responder}s and
+   * schedule each resulting reply on the clock. A responder matches when its
+   * `to` (if set) equals `msg.to` and its `when` predicate (if set) returns
+   * true; its `reply` may produce one reply, several, or none. Replies are
+   * delivered through the same {@link fireMessage} / {@link fireChannelMessage}
+   * device-queue path as scenario events, so they stay deterministic.
+   */
+  private dispatchResponders(msg: OutboundMessage): void {
+    for (const responder of this.responders) {
+      if (responder.to !== undefined && responder.to !== msg.to) continue;
+      if (responder.when !== undefined && !responder.when(msg)) continue;
+      const produced = responder.reply(msg);
+      if (produced === undefined) continue;
+      const replies = Array.isArray(produced) ? produced : [produced];
+      for (const reply of replies) this.scheduleReply(reply);
+    }
+  }
+
+  /**
+   * Schedule one responder reply at `clock.now() + after` (default `0`), firing
+   * it through the matching scenario-event path so it flows through the
+   * device-queue model. A `0` delay still goes through the clock, so the reply
+   * is delivered on the next `advance` — never synchronously inside the send.
+   */
+  private scheduleReply(reply: ResponderReply): void {
+    const delay = toMillis(reply.after ?? 0);
+    if (isChannelReply(reply)) {
+      this.clock.setTimeout(
+        () =>
+          this.fireChannelMessage({
+            kind: "channelMessage",
+            channel: reply.channel,
+            text: reply.text,
+            verified: reply.verified,
+            rssi: reply.rssi,
+            snr: reply.snr,
+          }),
+        delay,
+      );
+    } else {
+      this.clock.setTimeout(
+        () =>
+          this.fireMessage({
+            kind: "message",
+            from: reply.from,
+            text: reply.text,
+            txtType: reply.txtType,
+            rssi: reply.rssi,
+            snr: reply.snr,
+          }),
+        delay,
+      );
+    }
   }
 
   /**
