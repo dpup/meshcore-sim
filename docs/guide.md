@@ -293,6 +293,64 @@ await clock.advanceAsync("10s"); // advance + settle the async drain
 
 ---
 
+## Reactive replies
+
+A scenario is an *unconditional* timeline. A **responder** is the other half:
+the world *reacts to the app's outbound sends*. Pass `responders` to
+`SimConnection` and each `sendTextMessage` / `sendChannelTextMessage` is matched
+against them; a match schedules a reply on the clock, delivered through the same
+device-queue model as any other message. This is what makes request/response
+round-trips — remote-admin, echo bots, command bots — testable without
+pre-scripting the reply at a guessed offset.
+
+```ts
+import { SimConnection, TxtType } from "@dpup/meshcore-sim";
+
+const sim = new SimConnection({
+  world,
+  clock,
+  responders: [
+    {
+      to: "rocky-ridge",                         // match sends to this node id
+      when: (m) => m.txtType === TxtType.CliData, // …that are CLI commands
+      reply: (m) => ({                            // reply as that node, 2s later
+        from: "rocky-ridge",
+        text: `OK - ${m.text}`,
+        after: "2s",
+      }),
+    },
+  ],
+});
+```
+
+The remote-admin round-trip then works end to end:
+
+```ts
+await client.login(rockyKey, "password");
+const reply = new Promise((r) => client.once("contactMessage", r));
+await client.sendTextMessage(rockyKey, "reboot", TxtType.CliData);
+await clock.advanceAsync("2s"); // let the scheduled reply fire + deliver
+const [msg] = await reply;      // { text: "OK - reboot", … }
+```
+
+Each responder has:
+
+- **`to`** *(optional)* — a destination node id. Omit it to match any send (an
+  echo bot), or to key a channel responder purely on `when`.
+- **`when(msg)`** *(optional)* — a predicate over the outbound message
+  (`{ kind: "contact" | "channel", text, to?, txtType?, channel? }`).
+- **`reply(msg)`** — returns one reply, an array of replies (a multi-line
+  command response), or `undefined` to match without replying. A reply is a
+  **contact reply** (`{ from, text, after?, txtType?, … }`) keyed by the sending
+  node, or a **channel reply** (`{ channel, text, after?, verified?, … }`).
+
+Replies stay deterministic: each is scheduled at `clock.now() + after` (default
+`0`) and fires as the clock advances — even a zero-delay reply goes through the
+clock, never synchronously inside the send. Advance with `advanceAsync` (or
+`advance` then `settle`) to deliver them.
+
+---
+
 ## Generators
 
 For larger or more varied fixtures, use the procedural generators.

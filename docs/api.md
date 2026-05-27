@@ -1105,15 +1105,19 @@ _extraTimeoutMillis?): Promise<Uint8Array<ArrayBufferLike>>;
 ##### sendChannelTextMessage()
 
 ```ts
-sendChannelTextMessage(_channelIdx, _text): Promise<void>;
+sendChannelTextMessage(channelIdx, text): Promise<void>;
 ```
+
+Send a channel text message. Matches configured [Responder](#responder)s against
+the send (a channel command/echo bot keys on `msg.channel` via `when`) and
+schedules any reply on the clock.
 
 ###### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
-| `_channelIdx` | `number` |
-| `_text` | `string` |
+| `channelIdx` | `number` |
+| `text` | `string` |
 
 ###### Returns
 
@@ -1133,9 +1137,9 @@ sendFloodAdvert(): Promise<void>;
 
 ```ts
 sendTextMessage(
-   _contactPublicKey, 
-   _text, 
-_type?): Promise<RawSent>;
+   contactPublicKey, 
+   text, 
+type?): Promise<RawSent>;
 ```
 
 Send a direct text message. Returns a benign `RawSent` (the device
@@ -1145,16 +1149,17 @@ acknowledgement.
 
 The ack is deferred via `queueMicrotask` (not the clock) so a test can
 `await client.sendTextMessage(...)` and observe `sendConfirmed` without
-advancing time. *Reactive* scripted replies are out of scope: a reply is
-just another scheduled `message` event on the timeline.
+advancing time. Any configured [Responder](#responder) is then matched against the
+send and its reply scheduled on the clock — the world reacts to the app's
+action (PRD §2).
 
 ###### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
-| `_contactPublicKey` | `Uint8Array` |
-| `_text` | `string` |
-| `_type?` | `number` |
+| `contactPublicKey` | `Uint8Array` |
+| `text` | `string` |
+| `type?` | `number` |
 
 ###### Returns
 
@@ -1608,6 +1613,64 @@ Whether the device decrypt-verified this traffic. Defaults to `true`.
 
 ***
 
+### ChannelReply
+
+A reply delivered as channel traffic — for channel command/echo bots.
+Surfaces as a verified `channelMessage` (default) or, with `verified: false`,
+as unverified `channelData`.
+
+#### Properties
+
+##### after?
+
+```ts
+optional after?: Duration;
+```
+
+Delay before delivery, on the sim clock (default `0`). See [ContactReply.after](#after-1).
+
+##### channel
+
+```ts
+channel: string | number;
+```
+
+Channel slot index, or a channel name resolved against the world.
+
+##### rssi?
+
+```ts
+optional rssi?: number;
+```
+
+Received signal strength, in dBm.
+
+##### snr?
+
+```ts
+optional snr?: number;
+```
+
+Received signal-to-noise ratio, in dB.
+
+##### text
+
+```ts
+text: string;
+```
+
+The reply text.
+
+##### verified?
+
+```ts
+optional verified?: boolean;
+```
+
+Whether the device decrypt-verifies the reply. Defaults to `true`.
+
+***
+
 ### Clock
 
 The minimal clock interface that apps inject.
@@ -1708,6 +1771,66 @@ Schedule `callback` to run after `delay` has elapsed.
 [`TimerHandle`](#timerhandle)
 
 A handle that can be passed to [clearTimeout](#cleartimeout-1).
+
+***
+
+### ContactReply
+
+A reply delivered as a direct `contactMessage` from a node — the request/
+response and remote-admin shape. Surfaces (with `autoSync`) as the client's
+`contactMessage` event keyed by `from`'s `pubKeyPrefix`.
+
+#### Properties
+
+##### after?
+
+```ts
+optional after?: Duration;
+```
+
+Delay before the reply is delivered, on the sim clock, relative to the send
+(default `0` — delivered on the next clock advance). Use it to model a
+round-trip latency.
+
+##### from
+
+```ts
+from: string;
+```
+
+Id of the [SimNode](#simnode) the reply comes from.
+
+##### rssi?
+
+```ts
+optional rssi?: number;
+```
+
+Received signal strength, in dBm (rides on a `LogRxData` push).
+
+##### snr?
+
+```ts
+optional snr?: number;
+```
+
+Received signal-to-noise ratio, in dB.
+
+##### text
+
+```ts
+text: string;
+```
+
+The reply text.
+
+##### txtType?
+
+```ts
+optional txtType?: TxtType;
+```
+
+Text payload type. Defaults to `TxtType.Plain`.
 
 ***
 
@@ -1902,7 +2025,7 @@ order (`at`) differs from sender-timestamp order (`sentAt`). See
 optional snr?: number;
 ```
 
-Received signal-to-noise ratio, in dB. See [MessageEvent.rssi](#rssi-1).
+Received signal-to-noise ratio, in dB. See [MessageEvent.rssi](#rssi-3).
 
 ##### text
 
@@ -1954,6 +2077,58 @@ reachable: boolean;
 ```
 
 The node's new reachability.
+
+***
+
+### OutboundMessage
+
+The outbound send a [Responder](#responder) matches against — a normalized view of
+a `sendTextMessage` (`kind: "contact"`) or `sendChannelTextMessage`
+(`kind: "channel"`) call.
+
+#### Properties
+
+##### channel?
+
+```ts
+optional channel?: number;
+```
+
+Channel slot index, for a `channel` send.
+
+##### kind
+
+```ts
+kind: "contact" | "channel";
+```
+
+Which send produced this: a direct contact message or a channel message.
+
+##### text
+
+```ts
+text: string;
+```
+
+The message text.
+
+##### to?
+
+```ts
+optional to?: string;
+```
+
+Destination node id, for a direct (`contact`) send — resolved from the
+`contactPublicKey` against the world. `undefined` for a channel send, or if
+the key matches no known node.
+
+##### txtType?
+
+```ts
+optional txtType?: number;
+```
+
+Text payload type, for a direct send (e.g. `TxtType.CliData`).
 
 ***
 
@@ -2071,6 +2246,83 @@ Transmit power, in dBm.
 
 ***
 
+### Responder
+
+A reactive reply rule. On each matching outbound send, [reply](#reply) runs and
+its result (one reply, several, or none) is scheduled on the clock.
+
+#### Example
+
+```ts
+new SimConnection({
+  world, clock,
+  responders: [
+    {
+      to: "rocky-ridge",
+      when: (m) => m.txtType === TxtType.CliData,
+      reply: (m) => ({ from: "rocky-ridge", text: `OK - ${m.text}`, after: "2s" }),
+    },
+  ],
+});
+```
+
+#### Properties
+
+##### reply
+
+```ts
+reply: (msg) => 
+  | ResponderReply
+  | ResponderReply[]
+  | undefined;
+```
+
+Produce the reply (or replies) for a matched send. Return `undefined` (or an
+empty array) to match without replying.
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `msg` | [`OutboundMessage`](#outboundmessage) |
+
+###### Returns
+
+  \| [`ResponderReply`](#responderreply-1)
+  \| [`ResponderReply`](#responderreply-1)[]
+  \| `undefined`
+
+##### to?
+
+```ts
+optional to?: string;
+```
+
+Match only sends to this destination node id (a direct-send target). When
+omitted, the responder matches any send (subject to [when](#when)) — useful
+for an echo bot or a channel responder keyed purely on [when](#when).
+
+##### when?
+
+```ts
+optional when?: (msg) => boolean;
+```
+
+Optional predicate over the outbound message. When omitted, every send that
+passes [to](#to-1) matches.
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `msg` | [`OutboundMessage`](#outboundmessage) |
+
+###### Returns
+
+`boolean`
+
+***
+
 ### Scenario
 
 A dynamic fixture — a validated, time-sorted list of [ScheduledEvent](#scheduledevent)s.
@@ -2178,6 +2430,18 @@ clock: SimClock;
 ```
 
 The virtual clock driving deterministic timestamps (and M4 events).
+
+##### responders?
+
+```ts
+optional responders?: Responder[];
+```
+
+Optional reactive-reply rules. Each outbound send (`sendTextMessage` /
+`sendChannelTextMessage`) is matched against these; a matching responder's
+reply is scheduled on the clock and delivered through the device-queue
+model, so request/response round-trips (remote-admin, echo/command bots)
+work without pre-scripting the reply on the timeline. See [Responder](#responder).
 
 ##### scenario?
 
@@ -2453,6 +2717,18 @@ The role a node advertises on the mesh.
 
 The encode layer maps these to meshcore's `AdvType`:
 `companion → Chat`, `repeater → Repeater`, `roomserver → Room`.
+
+***
+
+### ResponderReply
+
+```ts
+type ResponderReply = ContactReply | ChannelReply;
+```
+
+One reply a responder produces — a direct [ContactReply](#contactreply) or a
+[ChannelReply](#channelreply). Discriminated structurally: a `channel` field marks a
+channel reply, otherwise it is a contact reply.
 
 ***
 
