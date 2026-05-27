@@ -96,6 +96,32 @@ describe("SimConnection dynamic scenario engine", () => {
     expect(messages.map((m) => m.text)).toEqual(["a", "b", "c"]);
   });
 
+  it("advanceAsync delivers a burst without pre-counting and preserves per-event timing", async () => {
+    // The consumer pattern from issue #4: register a plain handler (no
+    // pre-counted promise), advance once with advanceAsync, and read what
+    // arrived. A single `await Promise.resolve()` here would under-deliver.
+    const scn = scenario([
+      at("1s", { kind: "message", from: "rocky", text: "first" }),
+      at("4s", { kind: "message", from: "rocky", text: "second" }),
+      at("8s", { kind: "message", from: "rocky", text: "third" }),
+    ]);
+    const { client, clock } = await setup(scn);
+
+    const received: Array<{ text: string; at: number }> = [];
+    client.on("contactMessage", (m) => received.push({ text: m.text, at: clock.now() }));
+
+    await clock.advanceAsync("10s");
+
+    expect(received.map((r) => r.text)).toEqual(["first", "second", "third"]);
+    // Per-event timing is preserved: each message is stamped near its own
+    // arrival step, not collapsed to the 10s window end. With the default
+    // 250 ms step every arrival lands within one step of its scheduled time.
+    expect(received[0]!.at).toBeLessThanOrEqual(1250);
+    expect(received[1]!.at).toBeLessThanOrEqual(4250);
+    expect(received[2]!.at).toBeLessThanOrEqual(8250);
+    expect(clock.now()).toBe(10_000);
+  });
+
   it("a contactMessage carries the sender's pubKeyPrefix", async () => {
     const scn = scenario([at("1s", { kind: "message", from: "rocky", text: "hi" })]);
     const { client, clock, world } = await setup(scn);

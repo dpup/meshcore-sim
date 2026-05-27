@@ -261,6 +261,96 @@ export class SimClock implements Clock {
   }
 
   // -------------------------------------------------------------------------
+  // Async drain helpers (settling the consumer's microtask-driven delivery)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Default number of microtask turns {@link settle} yields, and {@link
+   * advanceAsync} yields after each step. The client's `MsgWaiting →
+   * getWaitingMessages() → emit` drain runs re-entrantly across many microtask
+   * turns; a single `await Promise.resolve()` flushes only the first. 64 turns
+   * comfortably settles the multi-message bursts the time-domain tests produce
+   * while staying bounded and cheap.
+   */
+  static readonly DEFAULT_FLUSHES = 64;
+
+  /**
+   * Default step (ms) {@link advanceAsync} advances per iteration. Fine enough
+   * that per-event timestamps within a window are preserved (each event is
+   * stamped at the step it fires in, not at the window's end), coarse enough to
+   * keep the step count — and therefore the microtask-flush cost — modest.
+   */
+  static readonly DEFAULT_STEP_MS = 250;
+
+  /**
+   * Yield the JS microtask queue `flushes` times, letting an async consumer's
+   * re-entrant work settle without advancing virtual time.
+   *
+   * `SimClock` fires timers **synchronously** inside {@link advance}, but a
+   * consumer like `MeshCoreClient` (under `autoSync`) drains the resulting
+   * `MsgWaiting` queue **asynchronously**, across many microtask turns. The old
+   * guidance — a single `await Promise.resolve()` — flushes only the first turn,
+   * silently under-delivering a multi-message burst. This drains the chain.
+   *
+   * Use it after a manual {@link advance}, or after an `await
+   * client.sendTextMessage(...)` whose ack/reply lands on the microtask queue.
+   * It consults no real time, so it stays deterministic.
+   */
+  async settle(flushes = SimClock.DEFAULT_FLUSHES): Promise<void> {
+    for (let i = 0; i < flushes; i++) await Promise.resolve();
+  }
+
+  /**
+   * Advance virtual time by `by` in fine steps, {@link settle}-ing the async
+   * consumer drain between each step. The settling counterpart to {@link
+   * advance}: use it whenever advancing the clock causes a consumer to deliver
+   * messages asynchronously (e.g. `MeshCoreClient` under `autoSync`).
+   *
+   * This fixes the two failure modes of `advance()` + a single `await
+   * Promise.resolve()`:
+   *
+   * 1. **Under-delivery.** One flush settles only the first of a burst's many
+   *    microtask turns; this flushes `flushes` turns after every step.
+   * 2. **Timestamp collapse.** One big `advance()` runs the drain *after* it
+   *    returns, when `now()` already equals the target, so every event in the
+   *    window is stamped at the window's end. Stepping fires each event at its
+   *    own step and settles it there, preserving per-event timing.
+   *
+   * The synchronous {@link advance} remains correct (and faster) for tests that
+   * only assert on timers and don't drive an async consumer; reach for
+   * `advanceAsync` when message delivery is involved.
+   *
+   * @param by - How far to advance (a {@link Duration}).
+   * @param opts.step - Step size per iteration (default {@link DEFAULT_STEP_MS}
+   *   ms). Must be strictly positive.
+   * @param opts.flushes - Microtask turns to settle after each step (default
+   *   {@link DEFAULT_FLUSHES}).
+   * @throws {SimError} If `by` is not a valid {@link Duration}, or `step <= 0`.
+   */
+  async advanceAsync(
+    by: Duration,
+    opts?: { step?: Duration; flushes?: number },
+  ): Promise<void> {
+    const total = toMillis(by);
+    const step = opts?.step !== undefined ? toMillis(opts.step) : SimClock.DEFAULT_STEP_MS;
+    const flushes = opts?.flushes ?? SimClock.DEFAULT_FLUSHES;
+    if (step <= 0) {
+      throw new SimError(
+        `advanceAsync: step must be strictly positive (got ${step} ms)`,
+      );
+    }
+    // A do/while runs at least one iteration even for `by === 0`, so
+    // `advanceAsync(0)` fires any already-due timers and settles the drain —
+    // the natural "advance nothing, just let delivery catch up" call.
+    let elapsed = 0;
+    do {
+      this.advance(Math.min(step, total - elapsed));
+      elapsed = Math.min(elapsed + step, total);
+      await this.settle(flushes);
+    } while (elapsed < total);
+  }
+
+  // -------------------------------------------------------------------------
   // Private helpers
   // -------------------------------------------------------------------------
 

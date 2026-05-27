@@ -473,6 +473,120 @@ describe("pendingCount", () => {
 });
 
 // ---------------------------------------------------------------------------
+// settle / advanceAsync (async drain helpers)
+// ---------------------------------------------------------------------------
+
+describe("settle", () => {
+  it("yields the microtask queue without advancing virtual time", async () => {
+    const clock = new SimClock({ start: 1000 });
+    let ran = false;
+    // A microtask chain that needs several turns to complete.
+    Promise.resolve()
+      .then(() => Promise.resolve())
+      .then(() => Promise.resolve())
+      .then(() => {
+        ran = true;
+      });
+
+    await clock.settle();
+
+    expect(ran).toBe(true);
+    expect(clock.now()).toBe(1000); // unchanged
+  });
+});
+
+describe("advanceAsync", () => {
+  it("advances exactly `by` and fires due timers", async () => {
+    const clock = new SimClock();
+    const fired: number[] = [];
+    clock.setTimeout(() => fired.push(clock.now()), "1s");
+    clock.setTimeout(() => fired.push(clock.now()), "3s");
+
+    await clock.advanceAsync("5s");
+
+    expect(clock.now()).toBe(5000);
+    expect(fired).toEqual([1000, 3000]);
+  });
+
+  it("settles async observers near the event, not at the window's end", async () => {
+    // The timestamp-collapse fix is about *async* observers — a consumer drain
+    // that reads now() in a microtask after a timer fires (the client stamps a
+    // delivered message this way). With one big advance the microtask runs
+    // after advance() returns, when now() === the window end (2000), collapsing
+    // every event's timestamp. Stepping + settling runs the observation at the
+    // step boundary near the event instead.
+    const clock = new SimClock();
+    let observedAt = -1;
+    clock.setTimeout(() => {
+      Promise.resolve().then(() => {
+        observedAt = clock.now();
+      });
+    }, "600ms");
+
+    await clock.advanceAsync("2s");
+
+    expect(observedAt).toBe(750); // 3rd 250 ms step boundary, not 2000
+    expect(clock.now()).toBe(2000);
+  });
+
+  it("settles a multi-turn async drain between steps (no under-delivery)", async () => {
+    // Each timer kicks off a multi-turn microtask chain, the way a client's
+    // re-entrant drain does. A single `await Promise.resolve()` per step would
+    // leave later turns unflushed; advanceAsync's bounded flush settles them.
+    const clock = new SimClock();
+    const delivered: string[] = [];
+    const enqueue = (tag: string) => {
+      Promise.resolve()
+        .then(() => Promise.resolve())
+        .then(() => Promise.resolve())
+        .then(() => {
+          delivered.push(tag);
+        });
+    };
+    clock.setTimeout(() => enqueue("a"), "300ms");
+    clock.setTimeout(() => enqueue("b"), "800ms");
+    clock.setTimeout(() => enqueue("c"), "1200ms");
+
+    await clock.advanceAsync("2s");
+
+    expect(delivered.sort()).toEqual(["a", "b", "c"]);
+  });
+
+  it("advanceAsync(0) fires already-due timers and settles", async () => {
+    const clock = new SimClock();
+    let ran = false;
+    clock.setTimeout(() => {
+      ran = true;
+    }, 0);
+
+    await clock.advanceAsync(0);
+
+    expect(ran).toBe(true);
+    expect(clock.now()).toBe(0);
+  });
+
+  it("respects a custom step and flushes", async () => {
+    const clock = new SimClock();
+    let observedAt = -1;
+    clock.setTimeout(() => {
+      Promise.resolve().then(() => {
+        observedAt = clock.now();
+      });
+    }, "600ms");
+
+    await clock.advanceAsync("2s", { step: "100ms", flushes: 8 });
+
+    expect(observedAt).toBe(600); // finer step lands the observation right at 600
+    expect(clock.now()).toBe(2000);
+  });
+
+  it("rejects a non-positive step", async () => {
+    const clock = new SimClock();
+    await expect(clock.advanceAsync("1s", { step: 0 })).rejects.toBeInstanceOf(SimError);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Determinism
 // ---------------------------------------------------------------------------
 
