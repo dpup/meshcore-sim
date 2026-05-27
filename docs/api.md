@@ -3183,7 +3183,7 @@ const scn = traffic.burst({ from: "rocky-ridge", count: 5, within: "10s", seed: 
 ### VERSION
 
 ```ts
-const VERSION: "0.1.1" = "0.1.1";
+const VERSION: "0.2.0" = "0.2.0";
 ```
 
 The package version (kept in sync with package.json at release time).
