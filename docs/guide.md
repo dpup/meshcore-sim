@@ -170,6 +170,36 @@ app can define locally and `SimClock` will satisfy structurally. In production
 the app wires in a real implementation backed by `Date.now()` and
 `globalThis.setTimeout`; in tests it swaps in `SimClock`.
 
+### Letting time flow on its own (`RealtimeClock`)
+
+`SimClock` is advance-only, which is exactly right for tests. For an
+**interactive** sim-backed server — a live demo, manual exploration, a real
+stdio MCP server fronted by `SimConnection` — you instead want time to flow by
+itself. `RealtimeClock` pumps a `SimClock` from wall time, so scenario events,
+responder replies, and debounces fire as real seconds pass:
+
+```ts
+import { SimClock, RealtimeClock, SimConnection } from "@dpup/meshcore-sim";
+
+const clock = new SimClock();
+const sim = new SimConnection({ world, clock, responders });
+// … wire up the interactive server …
+
+const realtime = new RealtimeClock(clock).start(); // time now flows on its own
+// … later, on shutdown:
+realtime.stop();
+```
+
+Each tick advances the clock by the wall time actually elapsed (so a busy event
+loop catches up rather than drifting). `step` sets the pump cadence (default
+`"250ms"`); `scale` runs simulated time faster than real — `scale: 10` makes a
+30-second debounce fire in three real seconds, handy for demos. The underlying
+interval is `unref`'d, so it never keeps a process alive on its own.
+
+> `RealtimeClock` is the **one** place real `setInterval` / `Date.now()` enter
+> the package, kept apart from the deterministic core. Don't use it in tests —
+> drive a bare `SimClock` with `advance` / `advanceAsync` instead.
+
 ---
 
 ## Scenarios and provenance

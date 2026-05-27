@@ -40,6 +40,10 @@ export { deriveNodeKey } from "./keys.js";
 export { SimClock } from "./clock.js";
 export type { Clock, TimerHandle } from "./clock.js";
 
+// Wall-clock driver — pumps a SimClock from real time for interactive use (#4B).
+export { RealtimeClock } from "./realtime.js";
+export type { RealtimeClockOptions } from "./realtime.js";
+
 // The raw `Connection` drop-in — inject into a `MeshCoreClient`.
 export { SimConnection } from "./connection.js";
 export type { ReceivedCommand, SimConnectionOptions } from "./connection.js";
