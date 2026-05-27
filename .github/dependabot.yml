@@ -1,0 +1,36 @@
+# Dependabot keeps dependencies current so SDK drift surfaces as a PR whose CI
+# run is the oracle: the drift test (test/drift.test.ts) plus the
+# real-MeshCoreClient integration tests validate that the simulator still
+# conforms to the upstream contract. See AGENTS.md "Keeping in sync with upstream".
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # The MeshCore SDK surface we conform to — the drift-sensitive deps.
+      # Grouped on their own so a release of either opens a single PR whose CI
+      # run is a clean "does the new SDK still work with the sim?" signal.
+      meshcore-sdk:
+        patterns:
+          - "@dpup/meshcore-ts"
+          - "@liamcottle/meshcore.js"
+      # Everything else (tsc, vitest, typedoc, @types/node, …) batched to keep
+      # PR noise down — these don't affect the upstream contract.
+      dev-tooling:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "@dpup/meshcore-ts"
+          - "@liamcottle/meshcore.js"
+
+  # Keep the workflow action pins (checkout, setup-bun, setup-node) current.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(ci)"

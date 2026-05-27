@@ -131,3 +131,34 @@ Key test files and what they cover:
 - `test/traffic.test.ts` — `burst`, `crosstalk`, `quiet`, `outOfOrder` including
   the `sentAt` reordering model.
 - `test/generate.test.ts` — `generateWorld` determinism; same-path validation.
+
+## Keeping in sync with upstream
+
+We are coupled to the **SDK, not the wire/RF protocol** (SimConnection hands
+meshcore-ts already-decoded `Raw*` objects; it never parses packets). Three
+surfaces of `@liamcottle/meshcore.js`, reached through the meshcore-ts contract:
+
+1. **Numeric `Constants`** (push codes, enums, response codes) — read **live**, so
+   value changes don't affect us; only a key rename/removal does.
+2. **The `Connection` method surface** `MeshCoreClient` calls — SimConnection must
+   implement it.
+3. **The `Raw*` data shapes** meshcore-ts's normalizers read — `encode.ts` must
+   produce them.
+
+Two guards, and one gap to know about:
+
+- **`test/drift.test.ts`** (runs in CI) catches **loud** drift: a referenced
+  `Constants` key or `Connection` method that no longer exists upstream, and a
+  method `MeshCoreClient` calls that SimConnection fails to implement. When it
+  fails after a dependency bump, reconcile exactly what it names.
+- **`.github/dependabot.yml`** bumps `@dpup/meshcore-ts` + `@liamcottle/meshcore.js`
+  weekly (grouped). The PR's CI run — the drift test plus the real-`MeshCoreClient`
+  integration tests — is the oracle for whether the new SDK still works.
+- **The gap: `Raw*` shape drift is type-erased and silent.** If meshcore.js
+  renames/retypes a field in a `Raw*` shape, `encode.ts` keeps emitting the old
+  one, the normalizer reads `undefined`, and *nothing fails*. No runtime check can
+  catch this. Reconcile `encode.ts` by hand against the upstream diff when a
+  dependency-bump PR's integration tests start producing wrong values; the only
+  true ground truth is a capture from real hardware (PRD capture-and-replay,
+  not built in v1). meshcore-ts owns watching meshcore.js's source; our trigger
+  is "a new meshcore-ts/meshcore.js was published," which Dependabot surfaces.
