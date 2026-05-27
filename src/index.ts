@@ -24,7 +24,7 @@
  */
 
 /** The package version (kept in sync with package.json at release time). */
-export const VERSION = "0.1.0";
+export const VERSION = "0.1.1";
 
 // World builders (the single validated constructor path) + the seeded PRNG.
 export { channel, contact, defineWorld, node } from "./builders.js";
