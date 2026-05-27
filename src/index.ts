@@ -42,7 +42,7 @@ export type { Clock, TimerHandle } from "./clock.js";
 
 // The raw `Connection` drop-in — inject into a `MeshCoreClient`.
 export { SimConnection } from "./connection.js";
-export type { SimConnectionOptions } from "./connection.js";
+export type { ReceivedCommand, SimConnectionOptions } from "./connection.js";
 
 // Reactive replies — let the world respond to outbound sends (#2).
 export type {

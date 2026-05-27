@@ -9,13 +9,16 @@
  * instead of canned returns. Cast it with {@link SimConnection.asConnection}
  * and pass it to `new MeshCoreClient(...)`.
  *
- * **This milestone (M3) implements the static-read half only.** Reads return
- * real world data resolved on the microtask queue (no clock gating — `await
- * client.getSelfInfo()` works without advancing time). The dynamic scenario
- * engine, the device message-queue, send→ack/reply behavior, and push-code
- * emission are M4: the mutation/send/config methods below are minimal resolving
- * stubs (marked `// M4/later`) so the cast `Connection` is complete and the
- * client never calls a missing method, and the queue reads return empty.
+ * **Reads** return real world data resolved on the microtask queue (no clock
+ * gating — `await client.getSelfInfo()` works without advancing time). The
+ * **dynamic scenario engine** drives the device message-queue and push-code
+ * emission as the clock advances; **sends** ack and may trigger a
+ * {@link Responder} reply; and **config/action commands** are logged (see
+ * {@link SimConnection.commandLog}) and, where a world effect is modeled
+ * (`setTxPower`/`setRadioParams`/`setAdvertName`/`setAdvertLatLong`), applied so
+ * a subsequent read reflects them. Commands without a modeled effect still
+ * resolve benignly and are recorded, so the cast `Connection` is complete and
+ * the client never calls a missing method.
  *
  * **Unreachable nodes.** A remote read (`getStatus`/`getTelemetry`/
  * `getNeighbours`/`login`) against a node with `reachable === false`, or an
@@ -80,7 +83,7 @@ import { isChannelReply } from "./responder.js";
 import type { OutboundMessage, Responder, ResponderReply } from "./responder.js";
 import { toMillis } from "./duration.js";
 import { SimError } from "./errors.js";
-import type { MeshWorld, SimNode } from "./world.js";
+import type { MeshWorld, RadioConfig, SimNode } from "./world.js";
 
 /**
  * Options for constructing a {@link SimConnection}.
@@ -108,6 +111,26 @@ export interface SimConnectionOptions {
    * work without pre-scripting the reply on the timeline. See {@link Responder}.
    */
   responders?: Responder[];
+}
+
+/**
+ * One entry in a {@link SimConnection.commandLog} — a write/config/action call
+ * the app made on the connection. Reads (`getSelfInfo`, `getContacts`, …) are
+ * not recorded; only commands that *do* something are. Lets a test assert the
+ * app issued an action (`set-tx-power 20`, `sendAdvert`, …) even where a full
+ * world-mutation model isn't worth it.
+ */
+export interface ReceivedCommand {
+  /** The `Connection` method the app invoked (e.g. `"setTxPower"`). */
+  method: string;
+  /**
+   * Named arguments, decoded into friendly values where useful (public keys as
+   * lowercase hex, a resolved destination node id as `to`). Empty for no-arg
+   * commands like `reboot`.
+   */
+  args: Record<string, unknown>;
+  /** Virtual time (ms, `clock.now()`) at which the command was received. */
+  at: number;
 }
 
 /** Resolve on the microtask queue, mirroring an async device response. */
@@ -154,18 +177,40 @@ export class SimConnection extends EventEmitter {
    */
   private readonly deviceQueue: RawWaitingMessage[] = [];
 
+  /**
+   * Ordered log of write/config/action commands the app issued. Exposed
+   * read-only via {@link commandLog}. The other half of "observable writes":
+   * even where a command isn't modeled as a world mutation, the test can still
+   * assert it happened.
+   */
+  private readonly commands: ReceivedCommand[] = [];
+
+  /**
+   * Per-node last-heard time (ms), keyed by node id, updated whenever a node
+   * emits (advert / message / telemetry). Backs the contact roster's
+   * `lastAdvert`: a node that has gone quiet keeps its old time rather than
+   * reading "heard now" on every poll. Nodes never heard fall back to
+   * {@link bootMs}.
+   */
+  private readonly lastHeardMs = new Map<string, number>();
+
+  /** Virtual time at construction — the last-heard baseline for unheard nodes. */
+  private readonly bootMs: number;
+
   constructor(opts: SimConnectionOptions) {
     super();
     // Clone the world so this connection owns its mutable state. Scenario
-    // `nodeState` events flip `reachable` in place; without the clone, a world
+    // `nodeState` events flip `reachable` in place, and config mutations
+    // (`setTxPower` etc.) write to the home node; without the clone, a world
     // reused across tests (the idiomatic `const world = defineWorld(...)` shared
-    // at module scope) would be permanently corrupted by one test's timeline,
-    // leaking offline/online state into later tests. The clone isolates every
-    // per-connection mutation from the caller's object.
+    // at module scope) would be permanently corrupted by one test, leaking
+    // state into later tests. The clone isolates every per-connection mutation
+    // from the caller's object.
     this.world = structuredClone(opts.world);
     this.clock = opts.clock;
     this.scenario = opts.scenario;
     this.responders = opts.responders ?? [];
+    this.bootMs = this.clock.now();
   }
 
   /**
@@ -175,6 +220,28 @@ export class SimConnection extends EventEmitter {
    */
   asConnection(): Connection {
     return this as unknown as Connection;
+  }
+
+  // --- observable writes (the received-command log) -----------------------
+
+  /**
+   * The ordered log of write/config/action commands the app has issued so far,
+   * oldest first. Read-only; assert against it to verify the app *did the
+   * thing*, e.g. `expect(sim.commandLog).toContainEqual(expect.objectContaining(
+   * { method: "setTxPower", args: { txPower: 20 } }))`.
+   */
+  get commandLog(): readonly ReceivedCommand[] {
+    return this.commands;
+  }
+
+  /** The logged commands with the given method name, oldest first. */
+  commandsOf(method: string): ReceivedCommand[] {
+    return this.commands.filter((c) => c.method === method);
+  }
+
+  /** Append a command to {@link commandLog}, stamped at the current virtual time. */
+  private record(method: string, args: Record<string, unknown> = {}): void {
+    this.commands.push({ method, args, at: this.clock.now() });
   }
 
   // --- lifecycle ---
@@ -244,22 +311,26 @@ export class SimConnection extends EventEmitter {
    * key passed in (which equals the contact's `publicKey`).
    */
   async getContacts(): Promise<RawContact[]> {
-    const nowSecs = epochSecsOf(this.clock.now());
     return resolved(
-      this.world.contacts.map((c) => contactOf(this.nodeForContactKey(c.publicKey), nowSecs)),
+      this.world.contacts.map((c) => {
+        const node = this.nodeForContactKey(c.publicKey);
+        return contactOf(node, this.lastHeardSecsOf(node.id));
+      }),
     );
   }
 
   async findContactByName(name: string): Promise<RawContact | undefined> {
     const match = this.world.contacts.find((c) => c.name === name);
     if (match === undefined) return resolved(undefined);
-    return resolved(contactOf(this.nodeForContactKey(match.publicKey), epochSecsOf(this.clock.now())));
+    const node = this.nodeForContactKey(match.publicKey);
+    return resolved(contactOf(node, this.lastHeardSecsOf(node.id)));
   }
 
   async findContactByPublicKeyPrefix(prefix: Uint8Array): Promise<RawContact | undefined> {
     const match = this.world.contacts.find((c) => hexStartsWith(c.publicKey, prefix));
     if (match === undefined) return resolved(undefined);
-    return resolved(contactOf(this.nodeForContactKey(match.publicKey), epochSecsOf(this.clock.now())));
+    const node = this.nodeForContactKey(match.publicKey);
+    return resolved(contactOf(node, this.lastHeardSecsOf(node.id)));
   }
 
   // --- channels (reads) ---
@@ -358,15 +429,16 @@ export class SimConnection extends EventEmitter {
     return resolved(this.deviceQueue.shift() ?? null);
   }
 
-  // --- out-of-scope stubs (M4/later) -------------------------------------
-  // These exist so the cast `Connection` is complete and the client never
-  // calls a missing method. They have no real behavior yet; the dynamic
-  // engine (sends, acks, replies, config mutation) is M4.
+  // --- sends, config & actions (logged; mutating where modeled) ----------
+  // Every command here appends to the received-command log (so a test can
+  // assert the app issued it), and the ones with a modeled world effect apply
+  // it (so a subsequent read reflects it). The rest still resolve benignly —
+  // accepted and recorded, with no world change.
 
   /**
-   * Send a direct text message. Returns a benign `RawSent` (the device
-   * accepted it) and, on the next microtask, emits a `SendConfirmed` push so
-   * the client's `sendConfirmed` event fires — a minimal-but-real send
+   * Send a direct text message. Records the send, returns a benign `RawSent`
+   * (the device accepted it), and on the next microtask emits a `SendConfirmed`
+   * push so the client's `sendConfirmed` event fires — a minimal-but-real send
    * acknowledgement.
    *
    * The ack is deferred via `queueMicrotask` (not the clock) so a test can
@@ -380,172 +452,217 @@ export class SimConnection extends EventEmitter {
     text: string,
     type?: number,
   ): Promise<RawSent> {
+    const to = this.nodeIdByKey(contactPublicKey);
+    this.record("sendTextMessage", { to, text, txtType: type });
     queueMicrotask(() =>
       this.emitPush(Constants.PushCodes.SendConfirmed, { ackCode: 0, roundTrip: 0 }),
     );
-    this.dispatchResponders({
-      kind: "contact",
-      text,
-      to: this.nodeIdByKey(contactPublicKey),
-      txtType: type,
-    });
+    this.dispatchResponders({ kind: "contact", text, to, txtType: type });
     return resolved({ result: Constants.ResponseCodes.Ok, expectedAckCrc: 0, estTimeout: 0 });
   }
 
   /**
-   * Send a channel text message. Matches configured {@link Responder}s against
-   * the send (a channel command/echo bot keys on `msg.channel` via `when`) and
-   * schedules any reply on the clock.
+   * Send a channel text message. Records the send, then matches configured
+   * {@link Responder}s against it (a channel command/echo bot keys on
+   * `msg.channel` via `when`) and schedules any reply on the clock.
    */
   async sendChannelTextMessage(channelIdx: number, text: string): Promise<void> {
+    this.record("sendChannelTextMessage", { channelIdx, text });
     this.dispatchResponders({ kind: "channel", text, channel: channelIdx });
     return resolved(undefined);
   }
 
-  // M4/later: device-time mutation.
-  async setDeviceTime(_epochSecs: number): Promise<void> {
+  // Device-time mutation — recorded; device time is driven by the SimClock.
+  async setDeviceTime(epochSecs: number): Promise<void> {
+    this.record("setDeviceTime", { epochSecs });
     return resolved(undefined);
   }
 
-  // M4/later: device-time mutation.
   async syncDeviceTime(): Promise<void> {
+    this.record("syncDeviceTime");
     return resolved(undefined);
   }
 
-  // M4/later: contact-table mutation.
-  async importContact(_advertPacketBytes: Uint8Array): Promise<void> {
+  // Contact-table mutation — recorded; no contact model yet.
+  async importContact(advertPacketBytes: Uint8Array): Promise<void> {
+    this.record("importContact", { advertPacketBytes });
     return resolved(undefined);
   }
 
-  // M4/later: export self/contact as advert bytes.
-  async exportContact(_pubKey?: Uint8Array | null): Promise<{ advertPacketBytes: Uint8Array }> {
+  async exportContact(pubKey?: Uint8Array | null): Promise<{ advertPacketBytes: Uint8Array }> {
+    this.record("exportContact", { pubKey: pubKey ? toHexLower(pubKey) : undefined });
     return resolved({ advertPacketBytes: new Uint8Array(0) });
   }
 
-  // M4/later: contact-table mutation.
-  async shareContact(_pubKey: Uint8Array): Promise<void> {
+  async shareContact(pubKey: Uint8Array): Promise<void> {
+    this.record("shareContact", { pubKey: toHexLower(pubKey) });
     return resolved(undefined);
   }
 
-  // M4/later: contact-table mutation.
-  async removeContact(_pubKey: Uint8Array): Promise<void> {
+  async removeContact(pubKey: Uint8Array): Promise<void> {
+    this.record("removeContact", { pubKey: toHexLower(pubKey) });
     return resolved(undefined);
   }
 
-  // M4/later: contact-table mutation.
   async addOrUpdateContact(
-    _publicKey: Uint8Array,
-    _type: number,
-    _flags: number,
-    _outPathLen: number,
-    _outPath: Uint8Array,
-    _advName: string,
-    _lastAdvert: number,
-    _advLat: number,
-    _advLon: number,
+    publicKey: Uint8Array,
+    type: number,
+    flags: number,
+    outPathLen: number,
+    outPath: Uint8Array,
+    advName: string,
+    lastAdvert: number,
+    advLat: number,
+    advLon: number,
   ): Promise<void> {
+    this.record("addOrUpdateContact", {
+      publicKey: toHexLower(publicKey),
+      type,
+      flags,
+      outPathLen,
+      outPath,
+      advName,
+      lastAdvert,
+      advLat,
+      advLon,
+    });
     return resolved(undefined);
   }
 
-  // M4/later: path reset / PathUpdated push.
-  async resetPath(_pubKey: Uint8Array): Promise<void> {
+  // Path reset — recorded; no path model yet.
+  async resetPath(pubKey: Uint8Array): Promise<void> {
+    this.record("resetPath", { pubKey: toHexLower(pubKey) });
     return resolved(undefined);
   }
 
-  // M4/later: device reboot.
+  // Device reboot — recorded; no lifecycle model.
   async reboot(): Promise<void> {
+    this.record("reboot");
     return resolved(undefined);
   }
 
-  // M4/later: key export. A zero-filled key keeps the shape valid.
+  // Key export — recorded (the key value is not logged); a zero-filled key
+  // keeps the shape valid.
   async exportPrivateKey(): Promise<{ privateKey: Uint8Array }> {
+    this.record("exportPrivateKey");
     return resolved({ privateKey: new Uint8Array(32) });
   }
 
-  // M4/later: key import.
   async importPrivateKey(_privateKey: Uint8Array): Promise<void> {
+    this.record("importPrivateKey");
     return resolved(undefined);
   }
 
-  // M4/later: advertising emits Advert / NewAdvert push codes.
-  async sendAdvert(_type: number): Promise<void> {
+  /**
+   * Advertise. Records the send and updates the home node's last-heard. It does
+   * **not** emit a received-`Advert` push: on hardware a device does not receive
+   * its own advert back, so the observable effect of self-advertising is the
+   * command log, not an inbound event. (Remote nodes advertising → an inbound
+   * `Advert` is a scenario `advert` event.)
+   */
+  async sendAdvert(type: number): Promise<void> {
+    this.record("sendAdvert", { type });
+    this.markHeard(this.world.homeNodeId);
     return resolved(undefined);
   }
 
-  // M4/later: advertising.
   async sendFloodAdvert(): Promise<void> {
+    this.record("sendFloodAdvert");
+    this.markHeard(this.world.homeNodeId);
     return resolved(undefined);
   }
 
-  // M4/later: advertising.
   async sendZeroHopAdvert(): Promise<void> {
+    this.record("sendZeroHopAdvert");
+    this.markHeard(this.world.homeNodeId);
     return resolved(undefined);
   }
 
-  // M4/later: advert config mutation.
-  async setAdvertName(_name: string): Promise<void> {
+  /** Set the advertised name — recorded and applied (reflected by `getSelfInfo`). */
+  async setAdvertName(name: string): Promise<void> {
+    this.record("setAdvertName", { name });
+    this.homeNode().name = name;
     return resolved(undefined);
   }
 
-  // M4/later: advert config mutation.
-  async setAdvertLatLong(_latitude: number, _longitude: number): Promise<void> {
+  /** Set the advertised position — recorded and applied (reflected by `getSelfInfo`). */
+  async setAdvertLatLong(latitude: number, longitude: number): Promise<void> {
+    this.record("setAdvertLatLong", { latitude, longitude });
+    const home = this.homeNode();
+    home.lat = latitude;
+    home.lon = longitude;
     return resolved(undefined);
   }
 
-  // M4/later: radio config mutation.
-  async setTxPower(_txPower: number): Promise<void> {
+  /** Set transmit power — recorded and applied (reflected by `getSelfInfo`). */
+  async setTxPower(txPower: number): Promise<void> {
+    this.record("setTxPower", { txPower });
+    this.homeRadio().txPower = txPower;
     return resolved(undefined);
   }
 
-  // M4/later: radio config mutation.
+  /** Set radio parameters — recorded and applied (reflected by `getSelfInfo`). */
   async setRadioParams(
-    _radioFreq: number,
-    _radioBw: number,
-    _radioSf: number,
-    _radioCr: number,
+    radioFreq: number,
+    radioBw: number,
+    radioSf: number,
+    radioCr: number,
   ): Promise<void> {
+    this.record("setRadioParams", { radioFreq, radioBw, radioSf, radioCr });
+    const radio = this.homeRadio();
+    radio.freq = radioFreq;
+    radio.bw = radioBw;
+    radio.sf = radioSf;
+    radio.cr = radioCr;
     return resolved(undefined);
   }
 
-  // M4/later: remote login emits LoginSuccess / LoginFail. Unreachable/unknown
-  // targets reject like other remote reads; reachable ones return a benign
-  // success keyed by the node prefix.
+  // Remote login. Recorded; unreachable/unknown targets reject like other
+  // remote reads, reachable ones return a benign success keyed by the prefix.
   async login(
     contactPublicKey: Uint8Array,
     _password: string,
     _extraTimeoutMillis?: number,
   ): Promise<RawLoginSuccess> {
+    this.record("login", { to: this.nodeIdByKey(contactPublicKey) });
     const node = this.reachableNodeByKey(contactPublicKey);
     if (node === undefined) return rejectNotFound();
     return resolved({ reserved: 0, pubKeyPrefix: fromHex(node.publicKey).subarray(0, 6) });
   }
 
-  // M4/later: binary request/response over the mesh.
+  // Binary request/response over the mesh — recorded; no model yet.
   async sendBinaryRequest(
-    _contactPublicKey: Uint8Array,
-    _requestCodeAndParams: Uint8Array,
+    contactPublicKey: Uint8Array,
+    requestCodeAndParams: Uint8Array,
     _extraTimeoutMillis?: number,
   ): Promise<Uint8Array> {
+    this.record("sendBinaryRequest", {
+      to: this.nodeIdByKey(contactPublicKey),
+      requestCodeAndParams,
+    });
     return resolved(new Uint8Array(0));
   }
 
-  // M4/later: channel config mutation.
-  async setChannel(_channelIdx: number, _name: string, _secret: Uint8Array): Promise<void> {
+  // Channel config mutation — recorded; no model yet.
+  async setChannel(channelIdx: number, name: string, secret: Uint8Array): Promise<void> {
+    this.record("setChannel", { channelIdx, name, secret: toHexLower(secret) });
     return resolved(undefined);
   }
 
-  // M4/later: channel config mutation.
-  async deleteChannel(_channelIdx: number): Promise<void> {
+  async deleteChannel(channelIdx: number): Promise<void> {
+    this.record("deleteChannel", { channelIdx });
     return resolved(undefined);
   }
 
-  // M4/later: signing.
+  // Signing — recorded (the data is not logged); no crypto.
   async sign(_data: Uint8Array): Promise<Uint8Array> {
+    this.record("sign");
     return resolved(new Uint8Array(0));
   }
 
-  // M4/later: path tracing emits TraceData.
-  async tracePath(_path: Uint8Array, _extraTimeoutMillis?: number): Promise<RawTraceData> {
+  // Path tracing — recorded; emits no TraceData yet.
+  async tracePath(path: Uint8Array, _extraTimeoutMillis?: number): Promise<RawTraceData> {
+    this.record("tracePath", { path });
     return resolved({
       reserved: 0,
       pathLen: 0,
@@ -558,28 +675,30 @@ export class SimConnection extends EventEmitter {
     });
   }
 
-  // M4/later: contact-add-mode config mutation.
-  async setOtherParams(_manualAddContacts: boolean): Promise<void> {
+  // Contact-add-mode config mutation — recorded; no model yet.
+  async setOtherParams(manualAddContacts: boolean): Promise<void> {
+    this.record("setOtherParams", { manualAddContacts });
     return resolved(undefined);
   }
 
-  // M4/later: contact-add-mode config mutation.
   async setAutoAddContacts(): Promise<void> {
+    this.record("setAutoAddContacts");
     return resolved(undefined);
   }
 
-  // M4/later: contact-add-mode config mutation.
   async setManualAddContacts(): Promise<void> {
+    this.record("setManualAddContacts");
     return resolved(undefined);
   }
 
-  // M4/later: flood-scope config mutation.
-  async setFloodScope(_transportKey: Uint8Array): Promise<unknown> {
+  // Flood-scope config mutation — recorded; no model yet.
+  async setFloodScope(transportKey: Uint8Array): Promise<unknown> {
+    this.record("setFloodScope", { transportKey: toHexLower(transportKey) });
     return resolved(undefined);
   }
 
-  // M4/later: flood-scope config mutation.
   async clearFloodScope(): Promise<unknown> {
+    this.record("clearFloodScope");
     return resolved(undefined);
   }
 
@@ -592,6 +711,33 @@ export class SimConnection extends EventEmitter {
       throw new SimError(`SimConnection: home node "${this.world.homeNodeId}" not found in world`);
     }
     return home;
+  }
+
+  /**
+   * The home node's radio config, creating a zeroed one if the node has none,
+   * so config mutations (`setTxPower` / `setRadioParams`) always have something
+   * to write and `getSelfInfo` reflects them.
+   */
+  private homeRadio(): RadioConfig {
+    const home = this.homeNode();
+    if (home.radioConfig === undefined) {
+      home.radioConfig = { freq: 0, bw: 0, sf: 0, cr: 0 };
+    }
+    return home.radioConfig;
+  }
+
+  /** Record that a node was just heard, for the contact roster's last-heard. */
+  private markHeard(nodeId: string): void {
+    this.lastHeardMs.set(nodeId, this.clock.now());
+  }
+
+  /**
+   * Last-heard time for a node as device-epoch seconds: the stored time if the
+   * node has emitted, else {@link bootMs} (heard as of connect). Unlike a
+   * read-time `now()`, this lets a quiet node read as stale.
+   */
+  private lastHeardSecsOf(nodeId: string): number {
+    return epochSecsOf(this.lastHeardMs.get(nodeId) ?? this.bootMs);
   }
 
   /**
@@ -724,6 +870,7 @@ export class SimConnection extends EventEmitter {
         this.fireTelemetry(event);
         break;
       case "advert":
+        this.markHeard(event.nodeId);
         this.emitPush(Constants.PushCodes.Advert, advertOf(this.nodeById(event.nodeId)));
         break;
     }
@@ -741,6 +888,7 @@ export class SimConnection extends EventEmitter {
    */
   private fireMessage(event: MessageEvent): void {
     const node = this.nodeById(event.from);
+    this.markHeard(event.from);
     this.deviceQueue.push({
       contactMessage: contactMessageOf(
         node,
@@ -772,6 +920,7 @@ export class SimConnection extends EventEmitter {
    */
   private fireChannelMessage(event: ChannelMessageEvent): void {
     const channelIdx = this.resolveChannelIdx(event.channel);
+    if (event.from !== undefined) this.markHeard(event.from);
     const verified = event.verified ?? true;
     if (verified) {
       this.deviceQueue.push({
@@ -820,6 +969,7 @@ export class SimConnection extends EventEmitter {
   /** `telemetry` → emit a `TelemetryResponse` push keyed by the node's prefix. */
   private fireTelemetry(event: TelemetryEvent): void {
     const node = this.nodeById(event.nodeId);
+    this.markHeard(event.nodeId);
     this.emitPush(Constants.PushCodes.TelemetryResponse, {
       reserved: 0,
       pubKeyPrefix: pubKeyPrefixOf(node),

@@ -559,36 +559,55 @@ new SimConnection(opts): SimConnection;
 EventEmitter.constructor
 ```
 
+#### Accessors
+
+##### commandLog
+
+###### Get Signature
+
+```ts
+get commandLog(): readonly ReceivedCommand[];
+```
+
+The ordered log of write/config/action commands the app has issued so far,
+oldest first. Read-only; assert against it to verify the app *did the
+thing*, e.g. `expect(sim.commandLog).toContainEqual(expect.objectContaining(
+{ method: "setTxPower", args: { txPower: 20 } }))`.
+
+###### Returns
+
+readonly [`ReceivedCommand`](#receivedcommand)[]
+
 #### Methods
 
 ##### addOrUpdateContact()
 
 ```ts
 addOrUpdateContact(
-   _publicKey, 
-   _type, 
-   _flags, 
-   _outPathLen, 
-   _outPath, 
-   _advName, 
-   _lastAdvert, 
-   _advLat, 
-_advLon): Promise<void>;
+   publicKey, 
+   type, 
+   flags, 
+   outPathLen, 
+   outPath, 
+   advName, 
+   lastAdvert, 
+   advLat, 
+advLon): Promise<void>;
 ```
 
 ###### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
-| `_publicKey` | `Uint8Array` |
-| `_type` | `number` |
-| `_flags` | `number` |
-| `_outPathLen` | `number` |
-| `_outPath` | `Uint8Array` |
-| `_advName` | `string` |
-| `_lastAdvert` | `number` |
-| `_advLat` | `number` |
-| `_advLon` | `number` |
+| `publicKey` | `Uint8Array` |
+| `type` | `number` |
+| `flags` | `number` |
+| `outPathLen` | `number` |
+| `outPath` | `Uint8Array` |
+| `advName` | `string` |
+| `lastAdvert` | `number` |
+| `advLat` | `number` |
+| `advLon` | `number` |
 
 ###### Returns
 
@@ -630,6 +649,24 @@ Close the connection: emit `disconnected` and resolve.
 
 `Promise`\<`void`\>
 
+##### commandsOf()
+
+```ts
+commandsOf(method): ReceivedCommand[];
+```
+
+The logged commands with the given method name, oldest first.
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `method` | `string` |
+
+###### Returns
+
+[`ReceivedCommand`](#receivedcommand)[]
+
 ##### connect()
 
 ```ts
@@ -650,14 +687,14 @@ before any `clock.advance()`.
 ##### deleteChannel()
 
 ```ts
-deleteChannel(_channelIdx): Promise<void>;
+deleteChannel(channelIdx): Promise<void>;
 ```
 
 ###### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
-| `_channelIdx` | `number` |
+| `channelIdx` | `number` |
 
 ###### Returns
 
@@ -682,7 +719,7 @@ deviceQuery(_appTargetVer): Promise<RawDeviceInfo>;
 ##### exportContact()
 
 ```ts
-exportContact(_pubKey?): Promise<{
+exportContact(pubKey?): Promise<{
   advertPacketBytes: Uint8Array;
 }>;
 ```
@@ -691,7 +728,7 @@ exportContact(_pubKey?): Promise<{
 
 | Parameter | Type |
 | ------ | ------ |
-| `_pubKey?` | `Uint8Array`\<`ArrayBufferLike`\> \| `null` |
+| `pubKey?` | `Uint8Array`\<`ArrayBufferLike`\> \| `null` |
 
 ###### Returns
 
@@ -973,14 +1010,14 @@ order — the burst-coalescing behaviour the time-domain tests rely on.
 ##### importContact()
 
 ```ts
-importContact(_advertPacketBytes): Promise<void>;
+importContact(advertPacketBytes): Promise<void>;
 ```
 
 ###### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
-| `_advertPacketBytes` | `Uint8Array` |
+| `advertPacketBytes` | `Uint8Array` |
 
 ###### Returns
 
@@ -1036,14 +1073,14 @@ reboot(): Promise<void>;
 ##### removeContact()
 
 ```ts
-removeContact(_pubKey): Promise<void>;
+removeContact(pubKey): Promise<void>;
 ```
 
 ###### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
-| `_pubKey` | `Uint8Array` |
+| `pubKey` | `Uint8Array` |
 
 ###### Returns
 
@@ -1052,14 +1089,14 @@ removeContact(_pubKey): Promise<void>;
 ##### resetPath()
 
 ```ts
-resetPath(_pubKey): Promise<void>;
+resetPath(pubKey): Promise<void>;
 ```
 
 ###### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
-| `_pubKey` | `Uint8Array` |
+| `pubKey` | `Uint8Array` |
 
 ###### Returns
 
@@ -1068,14 +1105,20 @@ resetPath(_pubKey): Promise<void>;
 ##### sendAdvert()
 
 ```ts
-sendAdvert(_type): Promise<void>;
+sendAdvert(type): Promise<void>;
 ```
+
+Advertise. Records the send and updates the home node's last-heard. It does
+**not** emit a received-`Advert` push: on hardware a device does not receive
+its own advert back, so the observable effect of self-advertising is the
+command log, not an inbound event. (Remote nodes advertising → an inbound
+`Advert` is a scenario `advert` event.)
 
 ###### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
-| `_type` | `number` |
+| `type` | `number` |
 
 ###### Returns
 
@@ -1085,8 +1128,8 @@ sendAdvert(_type): Promise<void>;
 
 ```ts
 sendBinaryRequest(
-   _contactPublicKey, 
-   _requestCodeAndParams, 
+   contactPublicKey, 
+   requestCodeAndParams, 
 _extraTimeoutMillis?): Promise<Uint8Array<ArrayBufferLike>>;
 ```
 
@@ -1094,8 +1137,8 @@ _extraTimeoutMillis?): Promise<Uint8Array<ArrayBufferLike>>;
 
 | Parameter | Type |
 | ------ | ------ |
-| `_contactPublicKey` | `Uint8Array` |
-| `_requestCodeAndParams` | `Uint8Array` |
+| `contactPublicKey` | `Uint8Array` |
+| `requestCodeAndParams` | `Uint8Array` |
 | `_extraTimeoutMillis?` | `number` |
 
 ###### Returns
@@ -1108,9 +1151,9 @@ _extraTimeoutMillis?): Promise<Uint8Array<ArrayBufferLike>>;
 sendChannelTextMessage(channelIdx, text): Promise<void>;
 ```
 
-Send a channel text message. Matches configured [Responder](#responder)s against
-the send (a channel command/echo bot keys on `msg.channel` via `when`) and
-schedules any reply on the clock.
+Send a channel text message. Records the send, then matches configured
+[Responder](#responder)s against it (a channel command/echo bot keys on
+`msg.channel` via `when`) and schedules any reply on the clock.
 
 ###### Parameters
 
@@ -1142,9 +1185,9 @@ sendTextMessage(
 type?): Promise<RawSent>;
 ```
 
-Send a direct text message. Returns a benign `RawSent` (the device
-accepted it) and, on the next microtask, emits a `SendConfirmed` push so
-the client's `sendConfirmed` event fires — a minimal-but-real send
+Send a direct text message. Records the send, returns a benign `RawSent`
+(the device accepted it), and on the next microtask emits a `SendConfirmed`
+push so the client's `sendConfirmed` event fires — a minimal-but-real send
 acknowledgement.
 
 The ack is deferred via `queueMicrotask` (not the clock) so a test can
@@ -1178,15 +1221,17 @@ sendZeroHopAdvert(): Promise<void>;
 ##### setAdvertLatLong()
 
 ```ts
-setAdvertLatLong(_latitude, _longitude): Promise<void>;
+setAdvertLatLong(latitude, longitude): Promise<void>;
 ```
+
+Set the advertised position — recorded and applied (reflected by `getSelfInfo`).
 
 ###### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
-| `_latitude` | `number` |
-| `_longitude` | `number` |
+| `latitude` | `number` |
+| `longitude` | `number` |
 
 ###### Returns
 
@@ -1195,14 +1240,16 @@ setAdvertLatLong(_latitude, _longitude): Promise<void>;
 ##### setAdvertName()
 
 ```ts
-setAdvertName(_name): Promise<void>;
+setAdvertName(name): Promise<void>;
 ```
+
+Set the advertised name — recorded and applied (reflected by `getSelfInfo`).
 
 ###### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
-| `_name` | `string` |
+| `name` | `string` |
 
 ###### Returns
 
@@ -1222,18 +1269,18 @@ setAutoAddContacts(): Promise<void>;
 
 ```ts
 setChannel(
-   _channelIdx, 
-   _name, 
-_secret): Promise<void>;
+   channelIdx, 
+   name, 
+secret): Promise<void>;
 ```
 
 ###### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
-| `_channelIdx` | `number` |
-| `_name` | `string` |
-| `_secret` | `Uint8Array` |
+| `channelIdx` | `number` |
+| `name` | `string` |
+| `secret` | `Uint8Array` |
 
 ###### Returns
 
@@ -1242,14 +1289,14 @@ _secret): Promise<void>;
 ##### setDeviceTime()
 
 ```ts
-setDeviceTime(_epochSecs): Promise<void>;
+setDeviceTime(epochSecs): Promise<void>;
 ```
 
 ###### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
-| `_epochSecs` | `number` |
+| `epochSecs` | `number` |
 
 ###### Returns
 
@@ -1258,14 +1305,14 @@ setDeviceTime(_epochSecs): Promise<void>;
 ##### setFloodScope()
 
 ```ts
-setFloodScope(_transportKey): Promise<unknown>;
+setFloodScope(transportKey): Promise<unknown>;
 ```
 
 ###### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
-| `_transportKey` | `Uint8Array` |
+| `transportKey` | `Uint8Array` |
 
 ###### Returns
 
@@ -1284,14 +1331,14 @@ setManualAddContacts(): Promise<void>;
 ##### setOtherParams()
 
 ```ts
-setOtherParams(_manualAddContacts): Promise<void>;
+setOtherParams(manualAddContacts): Promise<void>;
 ```
 
 ###### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
-| `_manualAddContacts` | `boolean` |
+| `manualAddContacts` | `boolean` |
 
 ###### Returns
 
@@ -1301,20 +1348,22 @@ setOtherParams(_manualAddContacts): Promise<void>;
 
 ```ts
 setRadioParams(
-   _radioFreq, 
-   _radioBw, 
-   _radioSf, 
-_radioCr): Promise<void>;
+   radioFreq, 
+   radioBw, 
+   radioSf, 
+radioCr): Promise<void>;
 ```
+
+Set radio parameters — recorded and applied (reflected by `getSelfInfo`).
 
 ###### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
-| `_radioFreq` | `number` |
-| `_radioBw` | `number` |
-| `_radioSf` | `number` |
-| `_radioCr` | `number` |
+| `radioFreq` | `number` |
+| `radioBw` | `number` |
+| `radioSf` | `number` |
+| `radioCr` | `number` |
 
 ###### Returns
 
@@ -1323,14 +1372,16 @@ _radioCr): Promise<void>;
 ##### setTxPower()
 
 ```ts
-setTxPower(_txPower): Promise<void>;
+setTxPower(txPower): Promise<void>;
 ```
+
+Set transmit power — recorded and applied (reflected by `getSelfInfo`).
 
 ###### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
-| `_txPower` | `number` |
+| `txPower` | `number` |
 
 ###### Returns
 
@@ -1339,14 +1390,14 @@ setTxPower(_txPower): Promise<void>;
 ##### shareContact()
 
 ```ts
-shareContact(_pubKey): Promise<void>;
+shareContact(pubKey): Promise<void>;
 ```
 
 ###### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
-| `_pubKey` | `Uint8Array` |
+| `pubKey` | `Uint8Array` |
 
 ###### Returns
 
@@ -1393,14 +1444,14 @@ Return and remove the oldest queued message, or `null` if the queue is empty.
 ##### tracePath()
 
 ```ts
-tracePath(_path, _extraTimeoutMillis?): Promise<RawTraceData>;
+tracePath(path, _extraTimeoutMillis?): Promise<RawTraceData>;
 ```
 
 ###### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
-| `_path` | `Uint8Array` |
+| `path` | `Uint8Array` |
 | `_extraTimeoutMillis?` | `number` |
 
 ###### Returns
@@ -2243,6 +2294,44 @@ optional txPower?: number;
 ```
 
 Transmit power, in dBm.
+
+***
+
+### ReceivedCommand
+
+One entry in a [SimConnection.commandLog](#commandlog) — a write/config/action call
+the app made on the connection. Reads (`getSelfInfo`, `getContacts`, …) are
+not recorded; only commands that *do* something are. Lets a test assert the
+app issued an action (`set-tx-power 20`, `sendAdvert`, …) even where a full
+world-mutation model isn't worth it.
+
+#### Properties
+
+##### args
+
+```ts
+args: Record<string, unknown>;
+```
+
+Named arguments, decoded into friendly values where useful (public keys as
+lowercase hex, a resolved destination node id as `to`). Empty for no-arg
+commands like `reboot`.
+
+##### at
+
+```ts
+at: number;
+```
+
+Virtual time (ms, `clock.now()`) at which the command was received.
+
+##### method
+
+```ts
+method: string;
+```
+
+The `Connection` method the app invoked (e.g. `"setTxPower"`).
 
 ***
 

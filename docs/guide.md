@@ -351,6 +351,66 @@ clock, never synchronously inside the send. Advance with `advanceAsync` (or
 
 ---
 
+## Observable writes
+
+Reads tell you the world's state; **writes** are the app *acting on* the device.
+The simulator makes those actions observable two ways, so an action test can
+assert the app *did the thing*, not merely that the call resolved.
+
+### Applied mutations
+
+The config setters mutate the (per-connection) world, so a subsequent read
+reflects them:
+
+```ts
+await client.setTxPower(15);
+(await client.getSelfInfo()).txPower; // 15
+
+await client.setRadioParams(869_525, 125, 11, 6);
+await client.setAdvertName("Relay 1");
+await client.setAdvertLatLong(47.62, -122.35); // → advLat/advLon in micro-degrees
+```
+
+Mutations are isolated to the connection (the world is cloned), so a world
+object reused across tests is never corrupted.
+
+### The received-command log
+
+Every write/config/action command is recorded on `sim.commandLog` — an ordered
+list of `{ method, args, at }` (reads are *not* recorded). This lets you verify
+commands that aren't modeled as a world mutation:
+
+```ts
+await client.sendAdvert(1);
+await client.setTxPower(20);
+
+sim.commandLog;            // [{ method: "sendAdvert", args: { type: 1 }, at: 0 }, …]
+sim.commandsOf("setTxPower"); // [{ method: "setTxPower", args: { txPower: 20 }, at: 0 }]
+```
+
+`args` are decoded into friendly values (public keys as hex; a send's resolved
+destination as `to`), and `at` is the virtual time (`clock.now()`) the command
+arrived. (`sendAdvert` records the call and updates last-heard; it does not emit
+a received-`Advert` push, since a device doesn't hear its own advert.)
+
+### Last-heard
+
+A contact's `lastAdvert` reflects when that node was **last heard** — updated
+whenever the node emits (advert, direct message, telemetry) — rather than being
+recomputed to "now" on every read. A node that has gone quiet keeps its old
+time, so "which nodes have gone quiet?" survey logic is testable:
+
+```ts
+const scn = scenario([at("10s", { kind: "advert", nodeId: "rocky-ridge" })]);
+// … connect over scn, then:
+await clock.advanceAsync("20s");
+const contacts = await client.getContacts();
+// rocky-ridge.lastAdvert is stamped at 10s; a node that never emitted falls
+// back to the connect-time baseline — so it reads as the staler of the two.
+```
+
+---
+
 ## Generators
 
 For larger or more varied fixtures, use the procedural generators.
