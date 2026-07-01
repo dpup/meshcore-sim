@@ -55,7 +55,7 @@
   "devDependencies": {
     "@dpup/meshcore-ts": "^0.1.1",
     "@liamcottle/meshcore.js": "^1.13.0",
-    "@types/node": "^25.9.1",
+    "@types/node": "^26.0.1",
     "typedoc": "^0.28.19",
     "typedoc-plugin-markdown": "^4.11.0",
     "typescript": "^6.0.3",
